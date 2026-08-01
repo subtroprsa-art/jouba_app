@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JDW Market Sync</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 40px auto;
+            padding: 20px;
+            background-color: #f4f6f8;
+        }
+        .card {
+            background: #ffffff;
+            padding: 24px;
+            margin-bottom: 24px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        }
+        h2 { margin-top: 0; color: #1e293b; }
+        label { display: block; margin-bottom: 8px; font-weight: bold; }
+        input[type="file"] { margin-bottom: 16px; width: 100%; }
+        button {
+            background-color: #2563eb;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            width: 100%;
+        }
+        button:hover { background-color: #1d4ed8; }
+        .floor-btn { background-color: #059669; }
+        .floor-btn:hover { background-color: #047857; }
+    </style>
+</head>
+<body>
+
+    <div class="card">
+        <h2>📊 Sync Market Stock CSV</h2>
+        <form action="/upload-stock" method="POST" enctype="multipart/form-data">
+            <label for="stockFile">Select Stock File (.csv / .txt):</label>
+            <input type="file" id="stockFile" name="file" required>
+            <button type="submit">Upload & Sync Stock</button>
+        </form>
+    </div>
+
+    <div class="card">
+        <h2>📦 Sync Floor Balance CSV</h2>
+        <form action="/upload-floor" method="POST" enctype="multipart/form-data">
+            <label for="floorFile">Select Floor File (.csv / .txt):</label>
+            <input type="file" id="floorFile" name="file" required>
+            <button type="submit" class="floor-btn">Upload & Sync Floor</button>
+        </form>
+    </div>
+
+</body>
+</html>
