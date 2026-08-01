@@ -3,11 +3,11 @@ import csv
 import os
 import psycopg2
 from psycopg2.extras import execute_values
-from flask import Flask, render_template, request
+from flask import Flask, render_template, request, jsonify
 
 app = Flask(__name__)
 
-# Neon Connection String from environment variable (or fallback for local testing)
+# Neon Connection String from environment variable (or fallback)
 DB_URI = os.getenv(
     "DATABASE_URL",
     "postgresql://neondb_owner:YOUR_PASSWORD@ep-shiny-snow-ay06dic8-pooler.c-5.us-east-2.aws.neon.tech/neondb?sslmode=require"
@@ -16,10 +16,37 @@ DB_URI = os.getenv(
 def get_db_connection():
     return psycopg2.connect(DB_URI)
 
-# Serve upload webpage
+# ------------------------------------------------------------------
+# Health & Status Endpoints
+# ------------------------------------------------------------------
+
+# Serve upload webpage (UI)
 @app.route('/')
 def home():
-    return render_template('index.html')
+    try:
+        return render_template('index.html')
+    except Exception:
+        return "App is running!", 200
+
+# Health check endpoint (for monitoring / Google Apps Script)
+@app.route('/health', methods=['GET'])
+def health():
+    return jsonify({"status": "ok", "message": "Service is healthy"}), 200
+
+# Coldstore slip processing endpoint
+@app.route('/process-coldstore-slip', methods=['POST'])
+def process_coldstore_slip():
+    data = request.get_json(silent=True) or request.form.to_dict()
+    # Add your coldstore slip handling logic here as needed
+    return jsonify({
+        "status": "success",
+        "message": "Coldstore slip received successfully",
+        "data_received": data
+    }), 200
+
+# ------------------------------------------------------------------
+# CSV Upload Endpoints
+# ------------------------------------------------------------------
 
 # Stock CSV upload
 @app.route('/upload-stock', methods=['POST'])
@@ -91,7 +118,7 @@ def upload_floor():
     file = request.files['file']
     content = file.read().decode('utf-8')
     f = io.StringIO(content.strip())
-    reader = csv.DictReader(f, delimiter='y')
+    reader = csv.DictReader(f, delimiter='\t')
     
     records = []
     grn_seq_counter = {}
@@ -139,6 +166,8 @@ def upload_floor():
         return f"✅ Successfully synced {len(records)} Floor Records to Neon!"
 
     return "⚠️ No valid floor records found.", 400
+
+# ------------------------------------------------------------------
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
