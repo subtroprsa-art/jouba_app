@@ -39,7 +39,7 @@ def login():
 @app.route('/logout')
 def logout():
     session.clear()
-    return redirect(url_for('logout'))
+    return redirect(url_for('login'))
 
 @app.route('/')
 @app.route('/dashboard')
