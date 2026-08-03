@@ -212,37 +212,49 @@ def upload_floor():
     return "⚠️ No valid records found.", 400
 
 # ------------------------------------------------------------------
-# OCR Webhook & Contact Endpoints
+# Historical Buyer Slips & Contact Endpoints
 # ------------------------------------------------------------------
 
-@app.route('/process-coldstore-slip', methods=['POST'])
-def process_coldstore_slip():
-    data = request.get_json(silent=True) or request.form.to_dict()
-    if not data:
-        return jsonify({"status": "error", "message": "No data received"}), 400
+@app.route('/process-buyer-slip', methods=['POST'])
+def process_buyer_slip():
+    data = request.get_json(silent=True) or request.form.to_dict() or {}
+    
+    date_val  = str(data.get('date', '')).strip()
+    buyer     = str(data.get('buyer', '')).strip().upper()
+    producer  = str(data.get('producer', 'UNKNOWN')).strip().upper()
+    commodity = str(data.get('commodity', 'OTHER')).strip().upper()
+    pack      = str(data.get('pack', '')).strip().upper()
+    
+    try:
+        qty = int(float(data.get('qty', 0) or 0))
+    except (ValueError, TypeError):
+        qty = 0
 
-    date_val = data.get('date', '')
-    buyer = data.get('buyer', '').strip().upper()
-    producer = data.get('producer', 'UNKNOWN').strip().upper()
-    commodity = data.get('commodity', '').strip().upper()
-    pack = data.get('pack', '').strip().upper()
-    qty = int(data.get('qty', 0) or 0)
-    price = float(data.get('price', 0) or 0.0)
-    total = float(data.get('total', 0) or 0.0)
+    try:
+        price = float(data.get('price', 0) or 0.0)
+    except (ValueError, TypeError):
+        price = 0.0
+
+    try:
+        total = float(data.get('total', 0) or 0.0)
+    except (ValueError, TypeError):
+        total = 0.0
 
     if 'AVOCADO' in commodity or commodity == 'AVO':
         commodity = 'AVOS'
 
-    if buyer and commodity:
+    if buyer:
         conn = get_db_connection()
         cursor = conn.cursor()
         
         parsed_date = None
         if date_val:
-            try:
-                parsed_date = datetime.strptime(date_val.strip(), '%d/%m/%Y').strftime('%Y-%m-%d')
-            except ValueError:
-                parsed_date = None
+            for fmt in ('%d/%m/%Y', '%Y-%m-%d', '%m/%d/%Y', '%Y/%m/%d'):
+                try:
+                    parsed_date = datetime.strptime(date_val.split('T')[0], fmt).strftime('%Y-%m-%d')
+                    break
+                except ValueError:
+                    continue
 
         query = """
         INSERT INTO buyer_history (
@@ -255,7 +267,7 @@ def process_coldstore_slip():
         conn.close()
         return jsonify({"status": "success", "message": f"Recorded slip for {buyer}"}), 200
 
-    return jsonify({"status": "error", "message": "Missing required fields"}), 400
+    return jsonify({"status": "error", "message": "Buyer name is required"}), 400
 
 @app.route('/upload-buyer-phones', methods=['POST'])
 def upload_buyer_phones():
