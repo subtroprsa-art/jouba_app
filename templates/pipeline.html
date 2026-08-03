@@ -43,13 +43,11 @@
         <th>Rank</th>
         <th>Buyer (Click to Expand Matches)</th>
         <th>Total Spent</th>
-        <th>Units Bought</th>
-        <th>Matched Commodities</th>
         <th>Action</th>
       </tr>
     </thead>
     <tbody id="pipeline-tbody">
-      <tr><td colspan="6">Loading pipeline matches...</td></tr>
+      <tr><td colspan="4">Loading pipeline matches...</td></tr>
     </tbody>
   </table>
 
@@ -68,11 +66,9 @@
         const response = await fetch('/api/sales-pipeline');
         const data = await response.json();
 
-        // Render rows
         let newHtml = '';
         data.pipeline.forEach((row, index) => {
           const isContacted = !!row.contacted_by;
-          const commList = row.commodities.length > 0 ? row.commodities.join(', ') : 'ALL PRODUCE';
           const cleanPhone = row.phone ? row.phone.replace(/[^0-9]/g, '') : '';
 
           let actionHtml = '';
@@ -94,12 +90,10 @@
               <td onclick="toggleTray(${index}, '${escapeQuotes(row.buyer)}')">#${index + 1}</td>
               <td onclick="toggleTray(${index}, '${escapeQuotes(row.buyer)}')"><strong>${row.buyer}</strong> ▾</td>
               <td onclick="toggleTray(${index}, '${escapeQuotes(row.buyer)}')">R ${row.total_spent.toLocaleString('en-ZA', {minimumFractionDigits: 2})}</td>
-              <td onclick="toggleTray(${index}, '${escapeQuotes(row.buyer)}')">${row.total_units.toLocaleString()}</td>
-              <td onclick="toggleTray(${index}, '${escapeQuotes(row.buyer)}')">${commList}</td>
               <td>${actionHtml}</td>
             </tr>
             <tr id="detail-row-${index}" class="detail-row" style="display: ${isOpen ? 'table-row' : 'none'};">
-              <td colspan="6">
+              <td colspan="4">
                 <div class="match-tray">
                   <div class="match-header">
                     <span>Select Product Matches to Include in Message:</span>
@@ -119,7 +113,7 @@
 
       } catch (err) {
         if (tbody.children.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="6">Error loading pipeline data.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="4">Error loading pipeline data.</td></tr>';
         }
       }
     }
