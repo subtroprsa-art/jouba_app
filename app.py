@@ -64,20 +64,24 @@ def run_sales_pipeline():
     conn = get_db_connection()
     cursor = conn.cursor()
     
+    # Matches current stock (rec'd <= 7 days ago) with historical buyer purchases
     query = """
-    WITH current_stock AS (
+    WITH recent_stock AS (
         SELECT DISTINCT commodity 
         FROM stock_records 
         WHERE (qty_rec - qty_sold) > 0
+          AND created_at >= NOW() - INTERVAL '7 days'
     )
     SELECT 
         b.buyer,
         SUM(b.total) AS total_spent,
         SUM(b.qty) AS total_units_bought,
-        STRING_AGG(DISTINCT b.commodity, ', ') AS matched_commodities
+        STRING_AGG(DISTINCT b.commodity, ', ') AS matched_commodities,
+        COALESCE(p.phone, '') AS phone
     FROM buyer_history b
-    JOIN current_stock s ON UPPER(b.commodity) = UPPER(s.commodity)
-    GROUP BY b.buyer
+    JOIN recent_stock s ON UPPER(b.commodity) = UPPER(s.commodity)
+    LEFT JOIN buyer_phones p ON UPPER(b.buyer) = UPPER(p.buyer_name)
+    GROUP BY b.buyer, p.phone
     ORDER BY total_spent DESC
     LIMIT 30;
     """
@@ -94,7 +98,8 @@ def run_sales_pipeline():
             "buyer": row[0],
             "total_spent": float(row[1] or 0),
             "units_bought": row[2],
-            "commodities": row[3]
+            "commodities": row[3],
+            "phone": row[4]
         })
         
     return jsonify({"status": "success", "top_30_buyers": top_buyers})
