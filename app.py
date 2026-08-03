@@ -1,85 +1,68 @@
 import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, redirect, url_for, session
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY", "jdw-fresh-secret-key-2026")
 
-# Database connection helper
+# Set master password for your sales team
+DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "jdw2026")
+
 def get_db_connection():
-    conn = psycopg2.connect(
+    return psycopg2.connect(
         os.environ.get("DATABASE_URL"),
         cursor_factory=RealDictCursor
     )
-    return conn
 
+def is_logged_in():
+    return session.get("logged_in") is True
+
+# --- ROUTE 1: LOGIN & LOGOUT ---
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    error = None
+    if request.method == 'POST':
+        password = request.form.get('password')
+        if password == DASHBOARD_PASSWORD:
+            session['logged_in'] = True
+            return redirect(url_for('dashboard'))
+        else:
+            error = "Invalid Password. Please try again."
+    return render_template('login.html', error=error)
+
+@app.route('/logout')
+def logout():
+    session.pop('logged_in', None)
+    return redirect(url_for('login'))
+
+# --- ROUTE 2: MAIN LANDING DASHBOARD (HUB) ---
 @app.route('/')
-def home():
-    return render_template('index.html')
+@app.route('/dashboard')
+def dashboard():
+    if not is_logged_in():
+        return redirect(url_for('login'))
+    return render_template('dashboard.html')
 
-# Endpoint 1: Direct sync of buyer contacts (Phone mapping)
-@app.route('/update-buyer-phone', methods=['POST'])
-def update_buyer_phone():
-    data = request.get_json() or {}
-    buyer_name = data.get('buyer_name', '').strip()
-    phone_number = data.get('phone_number', '').strip()
+# --- ROUTE 3: DEDICATED FUNCTION PAGES ---
+@app.route('/pipeline')
+def pipeline_page():
+    if not is_logged_in():
+        return redirect(url_for('login'))
+    return render_template('pipeline.html')
 
-    if not buyer_name or not phone_number:
-        return jsonify({"error": "buyer_name and phone_number required"}), 400
+@app.route('/contacts')
+def contacts_page():
+    if not is_logged_in():
+        return redirect(url_for('login'))
+    return render_template('contacts.html')
 
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    query = """
-        INSERT INTO buyer_phones (buyer_name, phone)
-        VALUES (%s, %s)
-        ON CONFLICT (buyer_name) 
-        DO UPDATE SET phone = EXCLUDED.phone;
-    """
-    cursor.execute(query, (buyer_name, phone_number))
-    conn.commit()
-    cursor.close()
-    conn.close()
-
-    return jsonify({"status": "success", "message": f"Updated phone for {buyer_name}"}), 200
-
-# Endpoint 2: Upload buyer history slips (Handles duplicates safely)
-@app.route('/process-buyer-slip', methods=['POST'])
-def process_buyer_slip():
-    data = request.get_json() or {}
-    
-    parsed_date = data.get('date')
-    buyer = data.get('buyer', '').strip()
-    producer = data.get('producer', '').strip()
-    commodity = data.get('commodity', '').strip()
-    pack = data.get('pack', '').strip()
-    qty = data.get('qty', 0)
-    price = data.get('price', 0.0)
-    total = data.get('total', 0.0)
-
-    if not buyer or not commodity:
-        return jsonify({"error": "Missing required slip details"}), 400
-
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    # ON CONFLICT prevents 500 crashes when unique constraint is triggered
-    query = """
-        INSERT INTO buyer_history (date, buyer, producer, commodity, pack, qty, price, total)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (buyer, commodity, pack, qty, price, total) 
-        DO NOTHING;
-    """
-    cursor.execute(query, (parsed_date, buyer, producer, commodity, pack, qty, price, total))
-    conn.commit()
-    cursor.close()
-    conn.close()
-
-    return jsonify({"status": "success", "message": "Record processed successfully"}), 200
-
-# Endpoint 3: Pipeline data with multi-commodity matching array
+# --- API ENDPOINTS ---
 @app.route('/api/sales-pipeline', methods=['GET'])
 def get_sales_pipeline():
+    if not is_logged_in():
+        return jsonify({"error": "Unauthorized"}), 401
+
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -99,7 +82,6 @@ def get_sales_pipeline():
     try:
         cursor.execute(query)
         results = cursor.fetchall()
-        
         pipeline = []
         for row in results:
             commodities = row['matching_commodities'] if row['matching_commodities'] else ['ALL PRODUCE']
@@ -110,16 +92,37 @@ def get_sales_pipeline():
                 "phone": row['phone'] or '',
                 "commodities": commodities
             })
-            
         cursor.close()
         conn.close()
         return jsonify(pipeline), 200
     except Exception as e:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
+        if cursor: cursor.close()
+        if conn: conn.close()
         return jsonify({"error": str(e)}), 500
+
+@app.route('/process-buyer-slip', methods=['POST'])
+def process_buyer_slip():
+    data = request.get_json() or {}
+    parsed_date, buyer = data.get('date'), data.get('buyer', '').strip()
+    producer, commodity = data.get('producer', '').strip(), data.get('commodity', '').strip()
+    pack, qty = data.get('pack', '').strip(), data.get('qty', 0)
+    price, total = data.get('price', 0.0), data.get('total', 0.0)
+
+    if not buyer or not commodity:
+        return jsonify({"error": "Missing required details"}), 400
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    query = """
+        INSERT INTO buyer_history (date, buyer, producer, commodity, pack, qty, price, total)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (buyer, commodity, pack, qty, price, total) DO NOTHING;
+    """
+    cursor.execute(query, (parsed_date, buyer, producer, commodity, pack, qty, price, total))
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return jsonify({"status": "success"}), 200
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)

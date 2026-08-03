@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Dashboard Hub - JDW Fresh</title>
+  <style>
+    body { font-family: sans-serif; background: #f8fafc; padding: 32px; margin: 0; }
+    .header { display: flex; justify-content: space-between; align-items: center; max-width: 1000px; margin: 0 auto 40px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; max-width: 1000px; margin: 0 auto; }
+    .card { background: white; padding: 32px; border-radius: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); text-decoration: none; color: inherit; transition: transform 0.2s, box-shadow 0.2s; border: 1px solid #e2e8f0; }
+    .card:hover { transform: translateY(-4px); box-shadow: 0 10px 15px rgba(0,0,0,0.1); border-color: #22c55e; }
+    .card h3 { margin-top: 0; color: #0f172a; font-size: 20px; }
+    .card p { color: #64748b; font-size: 14px; line-height: 1.5; }
+    .logout-btn { color: #ef4444; text-decoration: none; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>JDW Sales & Operations Hub</h1>
+    <a href="/logout" class="logout-btn">🔒 Logout</a>
+  </div>
+
+  <div class="grid">
+    <a href="/pipeline" class="card">
+      <h3>🚀 Sales Pipeline</h3>
+      <p>Match active inventory with buyer purchase history and launch WhatsApp messages.</p>
+    </a>
+
+    <a href="/contacts" class="card">
+      <h3>📞 Buyer Contacts</h3>
+      <p>View buyer phone numbers synced from Google Sheets and audit missing details.</p>
+    </a>
+  </div>
+</body>
+</html>

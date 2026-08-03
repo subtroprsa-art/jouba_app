@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Sales Pipeline - JDW Fresh</title>
+  <style>
+    body { font-family: sans-serif; background: #f8fafc; padding: 24px; margin: 0; }
+    .nav { margin-bottom: 24px; display: flex; justify-content: space-between; align-items: center; }
+    .btn-back { background: #e2e8f0; color: #334155; padding: 8px 16px; text-decoration: none; border-radius: 6px; font-weight: bold; }
+    table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    th, td { padding: 12px 16px; text-align: left; border-bottom: 1px solid #f1f5f9; }
+    th { background: #f8fafc; font-size: 12px; text-transform: uppercase; color: #64748b; }
+    select { padding: 6px 10px; border-radius: 6px; border: 1px solid #cbd5e1; }
+    .btn-wa { background: #22c55e; color: white; padding: 6px 12px; text-decoration: none; border-radius: 6px; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <div class="nav">
+    <a href="/dashboard" class="btn-back">⬅️ Back to Hub</a>
+    <h2>Sales Team Pipeline</h2>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Rank</th>
+        <th>Buyer</th>
+        <th>Total Spent</th>
+        <th>Units Bought</th>
+        <th>Commodity Offer</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody id="pipeline-tbody">
+      <tr><td colspan="6">Loading pipeline data...</td></tr>
+    </tbody>
+  </table>
+
+  <script>
+    async function loadPipelineData() {
+      const tbody = document.getElementById('pipeline-tbody');
+      try {
+        const response = await fetch('/api/sales-pipeline');
+        const data = await response.json();
+        tbody.innerHTML = '';
+        data.forEach((row, index) => {
+          const tr = document.createElement('tr');
+          const optionsHtml = row.commodities.map(c => `<option value="${c}">${c}</option>`).join('');
+          const firstProduct = row.commodities[0] || 'produce';
+          const initialMsg = `Good day ${row.buyer}. We have ${firstProduct} available for you today. Interested?`;
+          const cleanPhone = row.phone ? row.phone.replace(/[^0-9]/g, '') : '';
+          const initialWaUrl = cleanPhone 
+            ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(initialMsg)}`
+            : `https://wa.me/?text=${encodeURIComponent(initialMsg)}`;
+
+          tr.innerHTML = `
+            <td>#${index + 1}</td>
+            <td><strong>${row.buyer}</strong></td>
+            <td>R ${row.total_spent.toLocaleString('en-ZA', {minimumFractionDigits: 2})}</td>
+            <td>${row.total_units.toLocaleString()}</td>
+            <td>
+              <select onchange="onCommodityChange(this, '${escapeQuotes(row.buyer)}', '${row.phone}')">
+                ${optionsHtml}
+              </select>
+            </td>
+            <td>
+              <a href="${initialWaUrl}" target="_blank" class="btn-wa">💬 WhatsApp</a>
+            </td>
+          `;
+          tbody.appendChild(tr);
+        });
+      } catch (err) {
+        tbody.innerHTML = '<tr><td colspan="6">Error loading pipeline data.</td></tr>';
+      }
+    }
+
+    function onCommodityChange(selectEl, buyerName, phone) {
+      const selectedProduct = selectEl.value;
+      const row = selectEl.closest('tr');
+      const waButton = row.querySelector('.btn-wa');
+      const customMessage = `Good day ${buyerName}. We have ${selectedProduct} available for you today. Interested?`;
+      const cleanPhone = phone ? phone.replace(/[^0-9]/g, '') : '';
+      waButton.href = cleanPhone 
+        ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(customMessage)}`
+        : `https://wa.me/?text=${encodeURIComponent(customMessage)}`;
+    }
+
+    function escapeQuotes(str) { return str.replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
+    document.addEventListener('DOMContentLoaded', loadPipelineData);
+  </script>
+</body>
+</html>
