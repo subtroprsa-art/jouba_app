@@ -31,10 +31,10 @@ def update_buyer_phone():
     cursor = conn.cursor()
 
     query = """
-        INSERT INTO buyer_phones (buyer_name, phone_number)
+        INSERT INTO buyer_phones (buyer_name, phone)
         VALUES (%s, %s)
         ON CONFLICT (buyer_name) 
-        DO UPDATE SET phone_number = EXCLUDED.phone_number;
+        DO UPDATE SET phone = EXCLUDED.phone;
     """
     cursor.execute(query, (buyer_name, phone_number))
     conn.commit()
@@ -90,31 +90,36 @@ def get_sales_pipeline():
             SUM(h.total) AS total_spent,
             SUM(h.qty) AS total_units,
             p.phone,
-            ARRAY_AGG(DISTINCT h.commodity) FILTER (
-                WHERE h.commodity IN (SELECT DISTINCT commodity FROM active_stock WHERE qty > 0)
-            ) AS matching_commodities
+            ARRAY_AGG(DISTINCT h.commodity) AS matching_commodities
         FROM buyer_history h
         LEFT JOIN buyer_phones p ON UPPER(h.buyer) = UPPER(p.buyer_name)
         GROUP BY h.buyer, p.phone
         ORDER BY total_spent DESC;
     """
-    cursor.execute(query)
-    results = cursor.fetchall()
-    
-    pipeline = []
-    for row in results:
-        commodities = row['matching_commodities'] if row['matching_commodities'] else ['ALL PRODUCE']
-        pipeline.append({
-            "buyer": row['buyer'],
-            "total_spent": float(row['total_spent'] or 0.0),
-            "total_units": int(row['total_units'] or 0),
-            "phone": row['phone'] or '',
-            "commodities": commodities
-        })
+    try:
+        cursor.execute(query)
+        results = cursor.fetchall()
         
-    cursor.close()
-    conn.close()
-    return jsonify(pipeline), 200
+        pipeline = []
+        for row in results:
+            commodities = row['matching_commodities'] if row['matching_commodities'] else ['ALL PRODUCE']
+            pipeline.append({
+                "buyer": row['buyer'],
+                "total_spent": float(row['total_spent'] or 0.0),
+                "total_units": int(row['total_units'] or 0),
+                "phone": row['phone'] or '',
+                "commodities": commodities
+            })
+            
+        cursor.close()
+        conn.close()
+        return jsonify(pipeline), 200
+    except Exception as e:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
