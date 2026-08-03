@@ -1,145 +1,120 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>JDW Fresh Produce Dashboard</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
-    <style>
-        body { background-color: #f8f9fa; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-        .kpi-card { border-radius: 12px; border: none; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
-        .table-card { border-radius: 12px; border: none; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
-        .badge-commodity { font-size: 0.8rem; background-color: #e9ecef; color: #495057; border-radius: 6px; padding: 4px 8px; }
-        .btn-whatsapp { background-color: #25D366; color: white; border: none; }
-        .btn-whatsapp:hover { background-color: #1eb956; color: white; }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JDW Fresh Produce Dashboard</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f8fafc; margin: 0; padding: 24px; color: #1e293b; }
+    .container { max-width: 1200px; margin: 0 auto; }
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+    h1 { margin: 0; font-size: 24px; color: #0f172a; }
+    .btn { padding: 8px 16px; border-radius: 6px; text-decoration: none; font-weight: 600; cursor: pointer; border: none; font-size: 14px; }
+    .btn-refresh { background: #e2e8f0; color: #334155; }
+    .btn-whatsapp { background: #22c55e; color: white; display: inline-flex; align-items: center; gap: 6px; }
+    .btn-whatsapp:hover { background: #16a34a; }
+    table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    th, td { padding: 12px 16px; text-align: left; border-bottom: 1px solid #f1f5f9; }
+    th { background: #f8fafc; font-size: 12px; text-transform: uppercase; color: #64748b; font-weight: 700; }
+    select.commodity-dropdown { padding: 6px 10px; border-radius: 6px; border: 1px solid #cbd5e1; font-size: 14px; background: white; width: 100%; max-width: 200px; }
+  </style>
 </head>
-<body class="p-4">
-    <div class="container-fluid">
-        <!-- Header -->
-        <div class="d-flex justify-content-between align-items-center mb-4">
-            <div>
-                <h2 class="fw-bold m-0">JDW Fresh Produce Dashboard</h2>
-                <small class="text-muted">Live Stock & Buyer Analytics</small>
-            </div>
-            <div>
-                <button class="btn btn-primary me-2" onclick="togglePipelineModal()">📊 Pipeline</button>
-                <button class="btn btn-outline-secondary btn-sm" onclick="loadDashboardData()">🔄 Refresh Data</button>
-            </div>
-        </div>
+<body>
 
-        <!-- KPI Row -->
-        <div class="row g-3 mb-4">
-            <div class="col-md-4">
-                <div class="card kpi-card p-3 bg-white">
-                    <div class="text-muted small fw-bold">TOTAL STOCK AVAILABLE</div>
-                    <div class="display-6 fw-bold text-dark mt-2" id="kpi-total-stock">--</div>
-                    <div class="small text-secondary mt-1">Units on hand</div>
-                </div>
-            </div>
-            <div class="col-md-4">
-                <div class="card kpi-card p-3 bg-white">
-                    <div class="text-muted small fw-bold">CLEARANCE RATE</div>
-                    <div class="display-6 fw-bold text-success mt-2" id="kpi-clearance-rate">--%</div>
-                    <div class="small text-secondary mt-1">Sold vs Received</div>
-                </div>
-            </div>
-            <div class="col-md-4">
-                <div class="card kpi-card p-3 bg-white">
-                    <div class="text-muted small fw-bold">URGENT STOCK (>14 DAYS)</div>
-                    <div class="display-6 fw-bold text-danger mt-2" id="kpi-urgent-stock">--</div>
-                    <div class="small text-secondary mt-1">Units requiring fast sale</div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Sales Pipeline Section -->
-        <div class="card table-card p-4 bg-white" id="pipeline-section">
-            <div class="d-flex justify-content-between align-items-center mb-3">
-                <h5 class="fw-bold m-0">Sales Team Pipeline</h5>
-                <button class="btn btn-success fw-bold px-4" onclick="startSelling()">🚀 Start Selling</button>
-            </div>
-
-            <div class="table-responsive">
-                <table class="table table-hover align-middle">
-                    <thead class="table-light">
-                        <tr>
-                            <th scope="col">Rank</th>
-                            <th scope="col">Buyer</th>
-                            <th scope="col">Total Spent</th>
-                            <th scope="col">Units Bought</th>
-                            <th scope="col">Best Commodity Matches (< 7 Days Stock)</th>
-                            <th scope="col" class="text-center">Action</th>
-                        </tr>
-                    </thead>
-                    <tbody id="buyer-pipeline-body">
-                        <tr>
-                            <td colspan="6" class="text-center text-muted py-4">Click "Start Selling" to generate top 30 buyer matches.</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
+  <div class="container">
+    <div class="header">
+      <h1>JDW Fresh Produce Dashboard</h1>
+      <button class="btn btn-refresh" onclick="loadPipelineData()">🔄 Refresh Data</button>
     </div>
 
-    <script>
-        async function loadDashboardData() {
-            try {
-                const kpiRes = await fetch('/api/dashboard-kpis');
-                const kpiData = await kpiRes.json();
-                
-                document.getElementById('kpi-total-stock').innerText = kpiData.total_stock.toLocaleString();
-                document.getElementById('kpi-clearance-rate').innerText = kpiData.clearance_rate;
-                document.getElementById('kpi-urgent-stock').innerText = kpiData.urgent_stock.toLocaleString();
-            } catch (err) {
-                console.error("Failed to load KPIs:", err);
-            }
-        }
+    <h2>Sales Team Pipeline</h2>
 
-        async function startSelling() {
-            const tbody = document.getElementById('buyer-pipeline-body');
-            tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">Finding top buyer matches...</td></tr>';
+    <table>
+      <thead>
+        <tr>
+          <th>Rank</th>
+          <th>Buyer</th>
+          <th>Total Spent</th>
+          <th>Units Bought</th>
+          <th>Select Commodity Offer</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody id="pipeline-tbody">
+        <tr><td colspan="6">Loading buyers data...</td></tr>
+      </tbody>
+    </table>
+  </div>
 
-            try {
-                const pipelineRes = await fetch('/api/sales-pipeline');
-                const pipelineData = await pipelineRes.json();
-                
-                tbody.innerHTML = '';
+  <script>
+    async function loadPipelineData() {
+      const tbody = document.getElementById('pipeline-tbody');
+      try {
+        const response = await fetch('/api/sales-pipeline');
+        const data = await response.json();
 
-                if (pipelineData.top_30_buyers && pipelineData.top_30_buyers.length > 0) {
-                    pipelineData.top_30_buyers.forEach(item => {
-                        const cleanPhone = item.phone.replace(/[^0-9+]/g, '');
-                        
-                        // WhatsApp Pre-populated Message
-                        const msgText = `Good day ${item.buyer}. We have ${item.commodities} available for you today. Would you be interested to secure this produce?`;
-                        const waUrl = cleanPhone 
-                            ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msgText)}` 
-                            : `https://wa.me/?text=${encodeURIComponent(msgText)}`;
+        tbody.innerHTML = '';
+        data.forEach((row, index) => {
+          const tr = document.createElement('tr');
+          
+          // Generate commodity dropdown options
+          const optionsHtml = row.commodities.map(c => `<option value="${c}">${c}</option>`).join('');
+          
+          // Initial WhatsApp message URL
+          const firstProduct = row.commodities[0] || 'produce';
+          const initialMsg = `Good day ${row.buyer}. We have ${firstProduct} available for you today. Would you be interested to secure this produce?`;
+          
+          const cleanPhone = row.phone ? row.phone.replace(/[^0-9]/g, '') : '';
+          const initialWaUrl = cleanPhone 
+            ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(initialMsg)}`
+            : `https://wa.me/?text=${encodeURIComponent(initialMsg)}`;
 
-                        const row = document.createElement('tr');
-                        row.innerHTML = `
-                            <td class="fw-bold">#${item.rank}</td>
-                            <td class="fw-bold text-primary">${item.buyer}</td>
-                            <td>R ${item.total_spent.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
-                            <td>${item.units_bought.toLocaleString()}</td>
-                            <td><span class="badge-commodity">${item.commodities}</span></td>
-                            <td class="text-center">
-                                ${cleanPhone ? `<a href="tel:${cleanPhone}" class="btn btn-outline-primary btn-sm me-1"><i class="bi bi-telephone-fill"></i> Call</a>` : ''}
-                                <a href="${waUrl}" target="_blank" class="btn btn-whatsapp btn-sm"><i class="bi bi-whatsapp"></i> WhatsApp</a>
-                            </td>
-                        `;
-                        tbody.appendChild(row);
-                    });
-                } else {
-                    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">No matching buyer data found for stock received within 7 days.</td></tr>';
-                }
-            } catch (err) {
-                console.error("Failed to load pipeline:", err);
-            }
-        }
+          tr.innerHTML = `
+            <td>#${index + 1}</td>
+            <td><strong>${row.buyer}</strong></td>
+            <td>R ${row.total_spent.toLocaleString('en-ZA', {minimumFractionDigits: 2})}</td>
+            <td>${row.total_units.toLocaleString()}</td>
+            <td>
+              <select class="commodity-dropdown" onchange="onCommodityChange(this, '${escapeQuotes(row.buyer)}', '${row.phone}')">
+                ${optionsHtml}
+              </select>
+            </td>
+            <td>
+              <a href="${initialWaUrl}" target="_blank" class="btn btn-whatsapp wa-btn">
+                💬 WhatsApp
+              </a>
+            </td>
+          `;
+          tbody.appendChild(tr);
+        });
+      } catch (err) {
+        tbody.innerHTML = '<tr><td colspan="6">Error loading pipeline data.</td></tr>';
+      }
+    }
 
-        document.addEventListener('DOMContentLoaded', loadDashboardData);
-    </script>
+    // Handles live updates when user selects a different commodity from the dropdown
+    function onCommodityChange(selectEl, buyerName, phone) {
+      const selectedProduct = selectEl.value;
+      const row = selectEl.closest('tr');
+      const waButton = row.querySelector('.wa-btn');
+      
+      const customMessage = `Good day ${buyerName}. We have ${selectedProduct} available for you today. Would you be interested to secure this produce?`;
+      
+      const cleanPhone = phone ? phone.replace(/[^0-9]/g, '') : '';
+      const updatedWaUrl = cleanPhone 
+        ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(customMessage)}`
+        : `https://wa.me/?text=${encodeURIComponent(customMessage)}`;
+        
+      waButton.setAttribute('href', updatedWaUrl);
+    }
+
+    function escapeQuotes(str) {
+      return str.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+    }
+
+    // Load pipeline automatically on start
+    document.addEventListener('DOMContentLoaded', loadPipelineData);
+  </script>
+
 </body>
 </html>
