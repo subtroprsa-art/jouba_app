@@ -165,3 +165,63 @@ def upload_floor():
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
+
+from datetime import datetime
+
+# Buyer History CSV / TXT upload
+@app.route('/upload-buyer-history', methods=['POST'])
+def upload_buyer_history():
+    if 'file' not in request.files:
+        return "No file uploaded", 400
+        
+    file = request.files['file']
+    content = file.read().decode('utf-8', errors='ignore')
+    f = io.StringIO(content.strip())
+    reader = csv.DictReader(f, delimiter='\t')
+    
+    records = []
+    for row in reader:
+        buyer = row.get('buyer') or row.get('BUYER')
+        if not buyer or not str(buyer).strip():
+            continue
+            
+        raw_date = row.get('date') or row.get('DATE') or ''
+        parsed_date = None
+        if raw_date:
+            try:
+                # Converts '18/07/2026' to '2026-07-18' for PostgreSQL DATE
+                parsed_date = datetime.strptime(raw_date.strip(), '%d/%m/%Y').strftime('%Y-%m-%d')
+            except ValueError:
+                parsed_date = None
+
+        records.append((
+            parsed_date,
+            str(buyer).strip(),
+            row.get('producer', '').strip(),
+            row.get('commodity', '').strip(),
+            row.get('pack', '').strip(),
+            int(row.get('qty', 0) or 0),
+            float(row.get('price', 0) or 0.0),
+            float(row.get('total', 0) or 0.0)
+        ))
+
+    if records:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # 🗑️ Wipe old history so only the latest full report is active
+        cursor.execute("TRUNCATE TABLE buyer_history;")
+        
+        query = """
+        INSERT INTO buyer_history (
+            purchase_date, buyer, producer, commodity, pack, qty, price, total
+        ) VALUES %s;
+        """
+        execute_values(cursor, query, records)
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return f"✅ Database updated with {len(records)} NEW Buyer History Records!"
+
+    return "⚠️ No valid buyer history records found.", 400
+
