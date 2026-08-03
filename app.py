@@ -89,13 +89,13 @@ def get_sales_pipeline():
             COUNT(DISTINCT h.id) AS total_orders,
             SUM(h.total) AS total_spent,
             SUM(h.qty) AS total_units,
-            p.phone_number,
+            p.phone,
             ARRAY_AGG(DISTINCT h.commodity) FILTER (
                 WHERE h.commodity IN (SELECT DISTINCT commodity FROM active_stock WHERE qty > 0)
             ) AS matching_commodities
         FROM buyer_history h
         LEFT JOIN buyer_phones p ON UPPER(h.buyer) = UPPER(p.buyer_name)
-        GROUP BY h.buyer, p.phone_number
+        GROUP BY h.buyer, p.phone
         ORDER BY total_spent DESC;
     """
     cursor.execute(query)
@@ -108,7 +108,7 @@ def get_sales_pipeline():
             "buyer": row['buyer'],
             "total_spent": float(row['total_spent'] or 0.0),
             "total_units": int(row['total_units'] or 0),
-            "phone": row['phone_number'] or '',
+            "phone": row['phone'] or '',
             "commodities": commodities
         })
         
