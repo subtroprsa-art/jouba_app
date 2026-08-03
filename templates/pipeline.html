@@ -8,9 +8,11 @@
     .nav { margin-bottom: 24px; display: flex; justify-content: space-between; align-items: center; }
     .btn-back { background: #e2e8f0; color: #334155; padding: 8px 16px; text-decoration: none; border-radius: 6px; font-weight: bold; }
     .user-tag { font-size: 14px; background: #dcfce7; color: #166534; padding: 6px 12px; border-radius: 20px; font-weight: bold; }
+    
     table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
     th, td { padding: 12px 16px; text-align: left; border-bottom: 1px solid #f1f5f9; }
     th { background: #f8fafc; font-size: 12px; text-transform: uppercase; color: #64748b; }
+    
     tr.clickable-row { cursor: pointer; }
     tr.clickable-row:hover { background: #f1f5f9; }
     
@@ -18,12 +20,14 @@
     tr.contacted { background: #f1f5f9; opacity: 0.65; text-decoration: line-through; }
     .contact-badge { font-size: 12px; background: #fee2e2; color: #991b1b; padding: 4px 8px; border-radius: 4px; font-weight: bold; text-decoration: none; display: inline-block; }
     .btn-wa { background: #22c55e; color: white; padding: 6px 14px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-flex; align-items: center; }
-    .btn-wa.disabled { background: #94a3b8; cursor: not-allowed; pointer-events: none; }
     
-    /* Modal Window Styles */
-    .modal { display: none; position: fixed; z-index: 100; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); align-items: center; justify-content: center; }
-    .modal-content { background: white; padding: 24px; border-radius: 12px; width: 90%; max-width: 600px; max-height: 80vh; overflow-y: auto; }
-    .close-btn { float: right; font-size: 20px; font-weight: bold; cursor: pointer; }
+    /* Inline Match Tray Styles */
+    tr.detail-row { display: none; background: #f8fafc; }
+    .match-tray { padding: 16px 24px; border-left: 4px solid #22c55e; }
+    .match-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; font-weight: bold; }
+    .match-grid { display: flex; flex-wrap: wrap; gap: 12px; }
+    .match-card { background: white; border: 1px solid #cbd5e1; padding: 8px 14px; border-radius: 6px; display: flex; align-items: center; gap: 8px; font-size: 14px; }
+    .match-card label { cursor: pointer; }
   </style>
 </head>
 <body>
@@ -37,7 +41,7 @@
     <thead>
       <tr>
         <th>Rank</th>
-        <th>Buyer (Click for Details)</th>
+        <th>Buyer (Click to Expand Matches)</th>
         <th>Total Spent</th>
         <th>Units Bought</th>
         <th>Matched Commodities</th>
@@ -49,115 +53,161 @@
     </tbody>
   </table>
 
-  <!-- Modal for Buyer Match Breakdown -->
-  <div id="buyerModal" class="modal">
-    <div class="modal-content">
-      <span class="close-btn" onclick="closeModal()">&times;</span>
-      <h3 id="modalBuyerTitle">Buyer Matches</h3>
-      <table style="width:100%; border:1px solid #e2e8f0;">
-        <thead>
-          <tr style="background:#f8fafc;">
-            <th>Commodity</th>
-            <th>Pack / Size</th>
-            <th>Total Qty Bought</th>
-          </tr>
-        </thead>
-        <tbody id="modal-tbody"></tbody>
-      </table>
-    </div>
-  </div>
-
   <script>
-    let currentPipelineData = [];
-
     async function loadPipelineData() {
       const tbody = document.getElementById('pipeline-tbody');
       try {
         const response = await fetch('/api/sales-pipeline');
         const data = await response.json();
-        currentPipelineData = data.pipeline;
 
         tbody.innerHTML = '';
         data.pipeline.forEach((row, index) => {
-          const tr = document.createElement('tr');
           const isContacted = !!row.contacted_by;
-          if (isContacted) tr.classList.add('contacted');
-          tr.classList.add('clickable-row');
-
           const commList = row.commodities.length > 0 ? row.commodities.join(', ') : 'ALL PRODUCE';
-          const defaultProduct = row.commodities[0] || 'produce';
-          const msg = `Good day ${row.buyer}. We have ${defaultProduct} available for you today. Interested?`;
           const cleanPhone = row.phone ? row.phone.replace(/[^0-9]/g, '') : '';
-          const waUrl = cleanPhone 
-            ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}`
-            : `https://wa.me/?text=${encodeURIComponent(msg)}`;
 
+          // 1. Main Buyer Row
+          const tr = document.createElement('tr');
+          tr.className = `clickable-row ${isContacted ? 'contacted' : ''}`;
+          tr.id = `buyer-row-${index}`;
+          
           let actionHtml = '';
           if (isContacted) {
             actionHtml = `<span class="contact-badge">🔒 Contacted by ${row.contacted_by}</span>`;
           } else {
-            actionHtml = `<a href="${waUrl}" target="_blank" class="btn-wa" onclick="onWhatsAppClick(event, '${escapeQuotes(row.buyer)}', '${waUrl}')">💬 WhatsApp</a>`;
+            actionHtml = `<a id="wa-btn-${index}" href="#" target="_blank" class="btn-wa" onclick="onWhatsAppClick(event, '${escapeQuotes(row.buyer)}', ${index})">💬 WhatsApp</a>`;
           }
 
           tr.innerHTML = `
-            <td>#${index + 1}</td>
-            <td onclick="openBuyerModal('${escapeQuotes(row.buyer)}')"><strong>${row.buyer}</strong></td>
-            <td onclick="openBuyerModal('${escapeQuotes(row.buyer)}')">R ${row.total_spent.toLocaleString('en-ZA', {minimumFractionDigits: 2})}</td>
-            <td onclick="openBuyerModal('${escapeQuotes(row.buyer)}')">${row.total_units.toLocaleString()}</td>
-            <td onclick="openBuyerModal('${escapeQuotes(row.buyer)}')">${commList}</td>
+            <td onclick="toggleTray(${index}, '${escapeQuotes(row.buyer)}')">#${index + 1}</td>
+            <td onclick="toggleTray(${index}, '${escapeQuotes(row.buyer)}')"><strong>${row.buyer}</strong> ▾</td>
+            <td onclick="toggleTray(${index}, '${escapeQuotes(row.buyer)}')">R ${row.total_spent.toLocaleString('en-ZA', {minimumFractionDigits: 2})}</td>
+            <td onclick="toggleTray(${index}, '${escapeQuotes(row.buyer)}')">${row.total_units.toLocaleString()}</td>
+            <td onclick="toggleTray(${index}, '${escapeQuotes(row.buyer)}')">${commList}</td>
             <td>${actionHtml}</td>
           `;
+
+          // 2. Expandable Inline Match Detail Row
+          const detailTr = document.createElement('tr');
+          detailTr.className = 'detail-row';
+          detailTr.id = `detail-row-${index}`;
+          detailTr.innerHTML = `
+            <td colspan="6">
+              <div class="match-tray">
+                <div class="match-header">
+                  <span>Select Product Matches to Include in Message:</span>
+                  <label style="cursor:pointer;"><input type="checkbox" checked id="select-all-${index}" onchange="toggleSelectAll(${index})"> <strong>Select All</strong></label>
+                </div>
+                <div class="match-grid" id="match-grid-${index}">Loading match items...</div>
+              </div>
+            </td>
+          `;
+
           tbody.appendChild(tr);
+          tbody.appendChild(detailTr);
+
+          // Store initial state data
+          tr.dataset.phone = cleanPhone;
+          tr.dataset.buyer = row.buyer;
         });
       } catch (err) {
         tbody.innerHTML = '<tr><td colspan="6">Error loading pipeline data.</td></tr>';
       }
     }
 
-    // Handles clicking WhatsApp: opens window and claims lock status on backend
-    async function onWhatsAppClick(event, buyerName, waUrl) {
-      event.preventDefault();
-      window.open(waUrl, '_blank');
+    // Toggle inline expansion tray and fetch matches
+    async function toggleTray(index, buyerName) {
+      const detailRow = document.getElementById(`detail-row-${index}`);
+      const grid = document.getElementById(`match-grid-${index}`);
+
+      if (detailRow.style.display === 'table-row') {
+        detailRow.style.display = 'none';
+        return;
+      }
+
+      detailRow.style.display = 'table-row';
+
+      if (grid.dataset.loaded) return;
+
+      const res = await fetch(`/api/buyer-details/${encodeURIComponent(buyerName)}`);
+      const matches = await res.json();
+      grid.dataset.loaded = "true";
+
+      if (!matches || matches.length === 0) {
+        grid.innerHTML = '<em>No detailed matches found.</em>';
+        return;
+      }
+
+      grid.innerHTML = '';
+      matches.forEach((item, mIdx) => {
+        const itemLabel = `${item.commodity} (${item.pack})`;
+        const card = document.createElement('div');
+        card.className = 'match-card';
+        card.innerHTML = `
+          <input type="checkbox" class="comm-checkbox-${index}" value="${itemLabel}" data-comm="${item.commodity}" checked onchange="updateWhatsAppUrl(${index})">
+          <label onclick="this.previousElementSibling.click()">${itemLabel} - ${item.total_qty} units</label>
+        `;
+        grid.appendChild(card);
+      });
+
+      updateWhatsAppUrl(index);
+    }
+
+    // Toggle all checkboxes for a buyer
+    function toggleSelectAll(index) {
+      const masterBox = document.getElementById(`select-all-${index}`);
+      const checkboxes = document.querySelectorAll(`.comm-checkbox-${index}`);
+      checkboxes.forEach(cb => cb.checked = masterBox.checked);
+      updateWhatsAppUrl(index);
+    }
+
+    // Dynamically generate WhatsApp URL based on checked boxes
+    function updateWhatsAppUrl(index) {
+      const mainRow = document.getElementById(`buyer-row-${index}`);
+      const waBtn = document.getElementById(`wa-btn-${index}`);
+      if (!waBtn) return;
+
+      const phone = mainRow.dataset.phone;
+      const buyer = mainRow.dataset.buyer;
+      const checkedBoxes = document.querySelectorAll(`.comm-checkbox-${index}:checked`);
       
+      const selectedProducts = Array.from(checkedBoxes).map(cb => cb.dataset.comm);
+      const uniqueProducts = [...new Set(selectedProducts)];
+
+      let msg = "";
+      if (uniqueProducts.length > 0) {
+        const productText = uniqueProducts.join(', ');
+        msg = `Good day ${buyer}. We have ${productText} available for you today. Would you be interested to secure this produce?`;
+      } else {
+        msg = `Good day ${buyer}. We have fresh produce available for you today. Would you be interested?`;
+      }
+
+      const waUrl = phone 
+        ? `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`
+        : `https://wa.me/?text=${encodeURIComponent(msg)}`;
+
+      waBtn.href = waUrl;
+    }
+
+    // Handle WhatsApp button click and lock buyer row
+    async function onWhatsAppClick(event, buyerName, index) {
+      event.preventDefault();
+      const waBtn = document.getElementById(`wa-btn-${index}`);
+      if (waBtn.href && waBtn.href !== '#') {
+        window.open(waBtn.href, '_blank');
+      }
+
       await fetch('/api/mark-contacted', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ buyer: buyerName })
       });
-      
-      // Reload pipeline to lock buyer row instantly
+
       loadPipelineData();
-    }
-
-    // Modal popup to list commodities, pack, and size breakdown
-    async function openBuyerModal(buyerName) {
-      document.getElementById('modalBuyerTitle').innerText = buyerName + " - Historical Pack & Size Matches";
-      const tbody = document.getElementById('modal-tbody');
-      tbody.innerHTML = '<tr><td colspan="3">Loading item matches...</td></tr>';
-      document.getElementById('buyerModal').style.display = 'flex';
-
-      const res = await fetch(`/api/buyer-details/${encodeURIComponent(buyerName)}`);
-      const details = await res.json();
-
-      tbody.innerHTML = '';
-      details.forEach(item => {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-          <td><strong>${item.commodity}</strong></td>
-          <td>${item.pack}</td>
-          <td>${item.total_qty} units</td>
-        `;
-        tbody.appendChild(tr);
-      });
-    }
-
-    function closeModal() {
-      document.getElementById('buyerModal').style.display = 'none';
     }
 
     function escapeQuotes(str) { return str.replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
 
-    // Auto-refresh pipeline every 15 seconds so Riaan and Christoff see lock updates live
     setInterval(loadPipelineData, 15000);
     document.addEventListener('DOMContentLoaded', loadPipelineData);
   </script>
