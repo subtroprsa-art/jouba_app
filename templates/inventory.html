@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Inventory Management - JDW Fresh</title>
+  <style>
+    body { font-family: sans-serif; background: #f8fafc; padding: 24px; margin: 0; color: #1e293b; }
+    .nav { margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
+    .btn-back { background: #e2e8f0; color: #334155; padding: 8px 16px; text-decoration: none; border-radius: 6px; font-weight: bold; }
+    
+    .type-switcher { display: flex; gap: 12px; margin-bottom: 20px; }
+    .btn-toggle { flex: 1; padding: 12px; border: 2px solid #cbd5e1; background: white; border-radius: 8px; font-weight: bold; font-size: 16px; cursor: pointer; text-align: center; }
+    .btn-toggle.active { background: #0284c7; color: white; border-color: #0284c7; }
+    
+    .search-box { width: 100%; padding: 12px 16px; font-size: 15px; border: 1px solid #cbd5e1; border-radius: 8px; margin-bottom: 20px; box-sizing: border-box; }
+    
+    .salesmen-tabs { display: flex; gap: 8px; overflow-x: auto; margin-bottom: 16px; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; }
+    .tab-btn { padding: 8px 16px; border: none; background: #e2e8f0; border-radius: 6px; cursor: pointer; font-weight: bold; color: #475569; }
+    .tab-btn.active { background: #1e293b; color: white; }
+    
+    table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    th, td { padding: 12px 16px; text-align: left; border-bottom: 1px solid #f1f5f9; }
+    th { background: #f8fafc; font-size: 12px; text-transform: uppercase; color: #64748b; }
+    
+    /* Aging Badges */
+    .badge-old { background: #fee2e2; color: #991b1b; padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 12px; display: inline-block; }
+    .badge-fresh { background: #dcfce7; color: #166534; padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 12px; display: inline-block; }
+  </style>
+</head>
+<body>
+  <div class="nav">
+    <a href="/dashboard" class="btn-back">⬅️ Back to Hub</a>
+    <h2>Inventory Dashboard</h2>
+    <span style="font-weight: bold;">👤 {{ user_name }}</span>
+  </div>
+
+  <div class="type-switcher">
+    <button id="btn-stock" class="btn-toggle active" onclick="switchInventoryType('stock')">📦 Stock</button>
+    <button id="btn-floor" class="btn-toggle" onclick="switchInventoryType('floor')">🏬 Floor Balance</button>
+  </div>
+
+  <input type="text" id="search-bar" class="search-box" placeholder="🔍 Multi-search by Farmer, Commodity, Variety, Size, Weight..." onkeyup="filterInventory()">
+
+  <div id="salesmen-tabs" class="salesmen-tabs"></div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Farmer Name</th>
+        <th>Commodity</th>
+        <th>Variety</th>
+        <th>Size</th>
+        <th>Weight</th>
+        <th>Qty</th>
+        <th>Aging (Days)</th>
+      </tr>
+    </thead>
+    <tbody id="inventory-tbody">
+      <tr><td colspan="7">Select a salesman to view inventory...</td></tr>
+    </tbody>
+  </table>
+
+  <script>
+    let currentType = 'stock';
+    let fullInventoryData = {};
+    let activeSalesman = null;
+
+    async function loadInventory() {
+      const tbody = document.getElementById('inventory-tbody');
+      tbody.innerHTML = '<tr><td colspan="7">Loading inventory data...</td></tr>';
+      
+      try {
+        const res = await fetch(`/api/inventory/${currentType}`);
+        const data = await res.json();
+        fullInventoryData = data.inventory || {};
+        
+        renderSalesmenTabs();
+      } catch (err) {
+        tbody.innerHTML = '<tr><td colspan="7">Error loading inventory data.</td></tr>';
+      }
+    }
+
+    function switchInventoryType(type) {
+      currentType = type;
+      document.getElementById('btn-stock').classList.toggle('active', type === 'stock');
+      document.getElementById('btn-floor').classList.toggle('active', type === 'floor');
+      loadInventory();
+    }
+
+    function renderSalesmenTabs() {
+      const container = document.getElementById('salesmen-tabs');
+      container.innerHTML = '';
+      
+      const salesmen = Object.keys(fullInventoryData);
+      if (salesmen.length === 0) {
+        container.innerHTML = '<em>No stock records found.</em>';
+        document.getElementById('inventory-tbody').innerHTML = '<tr><td colspan="7">No inventory available.</td></tr>';
+        return;
+      }
+
+      salesmen.forEach((sm, index) => {
+        const btn = document.createElement('button');
+        btn.className = `tab-btn ${index === 0 ? 'active' : ''}`;
+        btn.innerText = sm;
+        btn.onclick = () => selectSalesman(sm, btn);
+        container.appendChild(btn);
+      });
+
+      // Default select first salesman
+      activeSalesman = salesmen[0];
+      renderTable();
+    }
+
+    function selectSalesman(sm, btnElement) {
+      activeSalesman = sm;
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      btnElement.classList.add('active');
+      renderTable();
+    }
+
+    function renderTable() {
+      const tbody = document.getElementById('inventory-tbody');
+      const items = fullInventoryData[activeSalesman] || [];
+      const query = document.getElementById('search-bar').value.toLowerCase().trim();
+
+      const filtered = items.filter(item => {
+        const searchStr = `${item.farmer} ${item.commodity} ${item.variety} ${item.size} ${item.pack_weight}`.toLowerCase();
+        return searchStr.includes(query);
+      });
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7">No matching inventory items found.</td></tr>';
+        return;
+      }
+
+      let html = '';
+      filtered.forEach(item => {
+        const isOld = item.age_days > 14;
+        const ageBadge = isOld 
+          ? `<span class="badge-old">⚠️ ${item.age_days} Days (OLD)</span>`
+          : `<span class="badge-fresh">${item.age_days} Days</span>`;
+
+        html += `
+          <tr style="${isOld ? 'background-color: #fff1f2;' : ''}">
+            <td><strong>${item.farmer}</strong></td>
+            <td>${item.commodity}</td>
+            <td>${item.variety}</td>
+            <td>${item.size}</td>
+            <td>${item.pack_weight}</td>
+            <td><strong>${item.qty}</strong></td>
+            <td>${ageBadge}</td>
+          </tr>
+        `;
+      });
+
+      tbody.innerHTML = html;
+    }
+
+    function filterInventory() {
+      renderTable();
+    }
+
+    document.addEventListener('DOMContentLoaded', loadInventory);
+  </script>
+</body>
+</html>

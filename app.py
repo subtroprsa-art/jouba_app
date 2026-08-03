@@ -2,11 +2,11 @@ import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from flask import Flask, request, jsonify, render_template, redirect, url_for, session
+from datetime import datetime
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "jdw-fresh-secret-key-2026")
 
-# Team Credentials
 USER_ACCOUNTS = {
     "riaan": {"name": "Riaan Joubert", "pass": os.environ.get("RIAAN_PASSWORD", "riaan2026")},
     "christoff": {"name": "Christoff de Wet", "pass": os.environ.get("CHRISTOFF_PASSWORD", "christoff2026")}
@@ -21,7 +21,6 @@ def get_db_connection():
 def get_current_user():
     return session.get("user_fullname")
 
-# --- AUTHENTICATION ROUTES ---
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     error = None
@@ -43,7 +42,6 @@ def logout():
     session.clear()
     return redirect(url_for('login'))
 
-# --- DASHBOARD & NAVIGATION ---
 @app.route('/')
 @app.route('/dashboard')
 def dashboard():
@@ -57,7 +55,12 @@ def pipeline_page():
         return redirect(url_for('login'))
     return render_template('pipeline.html', user_name=get_current_user())
 
-# --- SALES PIPELINE API ---
+@app.route('/inventory')
+def inventory_page():
+    if not session.get('logged_in'):
+        return redirect(url_for('login'))
+    return render_template('inventory.html', user_name=get_current_user())
+
 @app.route('/api/sales-pipeline', methods=['GET'])
 def get_sales_pipeline():
     if not session.get('logged_in'):
@@ -109,7 +112,6 @@ def get_sales_pipeline():
         if conn: conn.close()
         return jsonify({"error": str(e)}), 500
 
-# --- BUYER MATCH DETAILS API (Splits Commodity, Pack Weight, Class, Variety) ---
 @app.route('/api/buyer-details/<path:buyer_name>', methods=['GET'])
 def get_buyer_details(buyer_name):
     if not session.get('logged_in'):
@@ -142,7 +144,6 @@ def get_buyer_details(buyer_name):
             i_class = item['item_class'].strip()
             var = item['variety'].strip()
 
-            # Dynamic string splitting fallback if separate columns are empty
             if not p_weight or not i_class or not var:
                 tokens = raw_pack.split()
                 p_weight = p_weight or (tokens[0] if len(tokens) > 0 else 'STD')
@@ -177,7 +178,6 @@ def get_buyer_details(buyer_name):
         if conn: conn.close()
         return jsonify({"error": str(e)}), 500
 
-# --- MARK BUYER CONTACTED ---
 @app.route('/api/mark-contacted', methods=['POST'])
 def mark_contacted():
     if not session.get('logged_in'):
@@ -204,44 +204,59 @@ def mark_contacted():
 
     return jsonify({"status": "success", "contacted_by": user_name}), 200
 
-# --- PROCESS BUYER SLIPS ---
-@app.route('/process-buyer-slip', methods=['POST'])
-def process_buyer_slip():
-    data = request.get_json() or {}
-    
-    parsed_date = data.get('date')
-    buyer = data.get('buyer', '').strip()
-    producer = data.get('producer', '').strip()
-    commodity = data.get('commodity', '').strip()
-    pack = data.get('pack', '').strip()
-    qty = data.get('qty', 0)
-    price = data.get('price', 0.0)
-    total = data.get('total', 0.0)
+# --- INVENTORY API (STOCK & FLOOR BALANCE) ---
+@app.route('/api/inventory/<inv_type>', methods=['GET'])
+def get_inventory_data(inv_type):
+    if not session.get('logged_in'):
+        return jsonify({"error": "Unauthorized"}), 401
 
-    if not buyer or not commodity:
-        return jsonify({"error": "Missing required details"}), 400
-
-    # Parse pack into separate attributes during insert
-    tokens = pack.split()
-    pack_weight = tokens[0] if len(tokens) > 0 else 'STD'
-    item_class = 'Class 1' if 'C1' in pack.upper() or 'CLASS 1' in pack.upper() else ('Class 2' if 'C2' in pack.upper() or 'CLASS 2' in pack.upper() else 'Class 1')
-    variety = ' '.join(tokens[2:]) if len(tokens) > 2 else 'Standard'
-
+    table_name = "stock_inventory" if inv_type == "stock" else "floor_balance"
     conn = get_db_connection()
     cursor = conn.cursor()
-    
-    query = """
-        INSERT INTO buyer_history (date, buyer, producer, commodity, pack, pack_weight, item_class, variety, qty, price, total)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (buyer, commodity, pack, qty, price, total) 
-        DO NOTHING;
-    """
-    cursor.execute(query, (parsed_date, buyer, producer, commodity, pack, pack_weight, item_class, variety, qty, price, total))
-    conn.commit()
-    cursor.close()
-    conn.close()
 
-    return jsonify({"status": "success"}), 200
+    query = f"""
+        SELECT 
+            COALESCE(salesman, 'Unassigned') AS salesman,
+            COALESCE(farmer_name, '') AS farmer_name,
+            COALESCE(commodity, '') AS commodity,
+            COALESCE(variety, '') AS variety,
+            COALESCE(size, '') AS size,
+            COALESCE(pack_weight, '') AS pack_weight,
+            COALESCE(qty, 0) AS qty,
+            intake_date,
+            (CURRENT_DATE - intake_date) AS age_days
+        FROM {table_name}
+        ORDER BY salesman, age_days DESC;
+    """
+    try:
+        cursor.execute(query)
+        rows = cursor.fetchall()
+
+        # Group data by Salesman
+        salesmen_data = {}
+        for r in rows:
+            sm = r['salesman']
+            if sm not in salesmen_data:
+                salesmen_data[sm] = []
+            
+            salesmen_data[sm].append({
+                "farmer": r['farmer_name'],
+                "commodity": r['commodity'],
+                "variety": r['variety'],
+                "size": r['size'],
+                "pack_weight": r['pack_weight'],
+                "qty": r['qty'],
+                "intake_date": r['intake_date'].strftime('%Y-%m-%d') if r['intake_date'] else 'N/A',
+                "age_days": r['age_days'] if r['age_days'] is not None else 0
+            })
+
+        cursor.close()
+        conn.close()
+        return jsonify({"inventory": salesmen_data}), 200
+    except Exception as e:
+        if cursor: cursor.close()
+        if conn: conn.close()
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
