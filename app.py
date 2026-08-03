@@ -2,7 +2,6 @@ import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from flask import Flask, request, jsonify, render_template, redirect, url_for, session
-from datetime import datetime
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "jdw-fresh-secret-key-2026")
@@ -40,7 +39,7 @@ def login():
 @app.route('/logout')
 def logout():
     session.clear()
-    return redirect(url_for('login'))
+    return redirect(url_for('logout'))
 
 @app.route('/')
 @app.route('/dashboard')
@@ -55,12 +54,20 @@ def pipeline_page():
         return redirect(url_for('login'))
     return render_template('pipeline.html', user_name=get_current_user())
 
-@app.route('/inventory')
-def inventory_page():
+# --- DEDICATED SEPARATE INVENTORY PAGES ---
+@app.route('/stock')
+def stock_page():
     if not session.get('logged_in'):
         return redirect(url_for('login'))
-    return render_template('inventory.html', user_name=get_current_user())
+    return render_template('stock.html', user_name=get_current_user())
 
+@app.route('/floor-balance')
+def floor_balance_page():
+    if not session.get('logged_in'):
+        return redirect(url_for('login'))
+    return render_template('floor_balance.html', user_name=get_current_user())
+
+# --- AI SMART MATCHING PIPELINE API ---
 @app.route('/api/sales-pipeline', methods=['GET'])
 def get_sales_pipeline():
     if not session.get('logged_in'):
@@ -68,24 +75,50 @@ def get_sales_pipeline():
 
     conn = get_db_connection()
     cursor = conn.cursor()
-    
+
+    # Smart Match: Aggregates active stock and scores match capability based on age & history
     query = """
+        WITH live_stock AS (
+            SELECT 
+                UPPER(TRIM(commodity)) AS commodity_clean,
+                MIN(CURRENT_DATE - intake_date) AS min_age_days,
+                MAX(CURRENT_DATE - intake_date) AS max_age_days,
+                SUM(qty) AS total_qty
+            FROM (
+                SELECT commodity, intake_date, qty FROM stock_inventory WHERE qty > 0
+                UNION ALL
+                SELECT commodity, intake_date, qty FROM floor_balance WHERE qty > 0
+            ) s
+            GROUP BY UPPER(TRIM(commodity))
+        ),
+        buyer_habits AS (
+            SELECT 
+                UPPER(TRIM(buyer)) AS buyer_clean,
+                UPPER(TRIM(commodity)) AS commodity_clean,
+                COUNT(id) AS buy_count,
+                SUM(total) AS spent
+            FROM buyer_history
+            GROUP BY UPPER(TRIM(buyer)), UPPER(TRIM(commodity))
+        )
         SELECT 
             h.buyer,
-            COUNT(DISTINCT h.id) AS total_orders,
-            SUM(h.total) AS total_spent,
-            SUM(h.qty) AS total_units,
+            SUM(bh.spent) AS total_spent,
+            ARRAY_AGG(DISTINCT bh.commodity_clean) AS matching_commodities,
             p.phone,
-            ARRAY_AGG(DISTINCT h.commodity) AS matching_commodities,
             l.contacted_by,
             l.contacted_at
         FROM buyer_history h
+        INNER JOIN buyer_habits bh ON UPPER(TRIM(h.buyer)) = bh.buyer_clean
+        INNER JOIN live_stock ls ON bh.commodity_clean = ls.commodity_clean
         LEFT JOIN buyer_phones p ON UPPER(TRIM(h.buyer)) = UPPER(TRIM(p.buyer_name))
         LEFT JOIN (
             SELECT DISTINCT ON (UPPER(TRIM(buyer))) UPPER(TRIM(buyer)) AS buyer_clean, contacted_by, contacted_at
             FROM buyer_contact_log
             ORDER BY UPPER(TRIM(buyer)), contacted_at DESC
         ) l ON UPPER(TRIM(h.buyer)) = l.buyer_clean
+        -- AI Rules: Filter out fresh-only buyers (e.g. FLM) if stock min_age is too old (> 3 days)
+        LEFT JOIN buyer_preferences pref ON UPPER(TRIM(h.buyer)) = pref.buyer
+        WHERE (pref.max_stock_age_accepted IS NULL OR ls.min_age_days <= pref.max_stock_age_accepted)
         GROUP BY h.buyer, p.phone, l.contacted_by, l.contacted_at
         ORDER BY total_spent DESC;
     """
@@ -98,7 +131,6 @@ def get_sales_pipeline():
             pipeline.append({
                 "buyer": row['buyer'],
                 "total_spent": float(row['total_spent'] or 0.0),
-                "total_units": int(row['total_units'] or 0),
                 "phone": row['phone'] or '',
                 "commodities": commodities,
                 "contacted_by": row['contacted_by'],
@@ -112,99 +144,6 @@ def get_sales_pipeline():
         if conn: conn.close()
         return jsonify({"error": str(e)}), 500
 
-@app.route('/api/buyer-details/<path:buyer_name>', methods=['GET'])
-def get_buyer_details(buyer_name):
-    if not session.get('logged_in'):
-        return jsonify({"error": "Unauthorized"}), 401
-
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    query = """
-        SELECT 
-            COALESCE(commodity, 'PRODUCE') AS commodity,
-            COALESCE(pack, '') AS raw_pack,
-            COALESCE(pack_weight, '') AS pack_weight,
-            COALESCE(item_class, '') AS item_class,
-            COALESCE(variety, '') AS variety,
-            SUM(qty) AS total_qty
-        FROM buyer_history
-        WHERE UPPER(TRIM(buyer)) = UPPER(TRIM(%s))
-        GROUP BY commodity, pack, pack_weight, item_class, variety
-        ORDER BY total_qty DESC;
-    """
-    try:
-        cursor.execute(query, (buyer_name,))
-        matches = cursor.fetchall()
-        
-        detail_list = []
-        for item in matches:
-            raw_pack = item['raw_pack'].strip()
-            p_weight = item['pack_weight'].strip()
-            i_class = item['item_class'].strip()
-            var = item['variety'].strip()
-
-            if not p_weight or not i_class or not var:
-                tokens = raw_pack.split()
-                p_weight = p_weight or (tokens[0] if len(tokens) > 0 else 'STD')
-                
-                if not i_class:
-                    if 'C1' in raw_pack.upper() or 'CLASS 1' in raw_pack.upper():
-                        i_class = 'Class 1'
-                    elif 'C2' in raw_pack.upper() or 'CLASS 2' in raw_pack.upper():
-                        i_class = 'Class 2'
-                    else:
-                        i_class = 'Class 1'
-                        
-                if not var:
-                    var = ' '.join(tokens[2:]) if len(tokens) > 2 else 'Standard'
-
-            pack_display = f"{p_weight} {i_class} {var}".strip()
-
-            detail_list.append({
-                "commodity": item['commodity'],
-                "pack": pack_display if pack_display else raw_pack,
-                "pack_weight": p_weight,
-                "item_class": i_class,
-                "variety": var,
-                "total_qty": int(item['total_qty'] or 0)
-            })
-            
-        cursor.close()
-        conn.close()
-        return jsonify(detail_list), 200
-    except Exception as e:
-        if cursor: cursor.close()
-        if conn: conn.close()
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/api/mark-contacted', methods=['POST'])
-def mark_contacted():
-    if not session.get('logged_in'):
-        return jsonify({"error": "Unauthorized"}), 401
-
-    data = request.get_json() or {}
-    buyer = data.get('buyer', '').strip()
-    user_name = get_current_user()
-
-    if not buyer:
-        return jsonify({"error": "Buyer name required"}), 400
-
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    query = """
-        INSERT INTO buyer_contact_log (buyer, contacted_by)
-        VALUES (%s, %s);
-    """
-    cursor.execute(query, (buyer, user_name))
-    conn.commit()
-    cursor.close()
-    conn.close()
-
-    return jsonify({"status": "success", "contacted_by": user_name}), 200
-
-# --- INVENTORY API (STOCK & FLOOR BALANCE) ---
 @app.route('/api/inventory/<inv_type>', methods=['GET'])
 def get_inventory_data(inv_type):
     if not session.get('logged_in'):
@@ -232,7 +171,6 @@ def get_inventory_data(inv_type):
         cursor.execute(query)
         rows = cursor.fetchall()
 
-        # Group data by Salesman
         salesmen_data = {}
         for r in rows:
             sm = r['salesman']

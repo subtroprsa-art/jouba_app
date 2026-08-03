@@ -6,7 +6,7 @@
   <style>
     body { font-family: sans-serif; background: #f8fafc; padding: 40px; margin: 0; color: #1e293b; }
     .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 32px; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; }
     .card { background: white; padding: 24px; border-radius: 12px; border: 1px solid #e2e8f0; box-shadow: 0 2px 4px rgba(0,0,0,0.05); text-decoration: none; color: inherit; transition: transform 0.2s, box-shadow 0.2s; }
     .card:hover { transform: translateY(-3px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
     .card h3 { margin-top: 0; font-size: 20px; color: #0f172a; }
@@ -25,13 +25,18 @@
 
   <div class="grid">
     <a href="/pipeline" class="card">
-      <h3>🚀 Sales Pipeline</h3>
-      <p>Match active inventory with buyer purchase history and launch WhatsApp messages.</p>
+      <h3>🚀 AI Sales Pipeline</h3>
+      <p>Smart historic buyer matching cross-referenced with live stock availability.</p>
     </a>
 
-    <a href="/inventory" class="card">
-      <h3>📦 Inventory & Floor Balance</h3>
-      <p>View Stock and Floor Balance per salesman with aging indicators and multi-keyword search.</p>
+    <a href="/stock" class="card">
+      <h3>📦 Stock Inventory</h3>
+      <p>View current stock per salesman with highlighted filter tabs and aging indicators.</p>
+    </a>
+
+    <a href="/floor-balance" class="card">
+      <h3>🏬 Floor Balance</h3>
+      <p>View current floor balance per salesman with highlighted filter tabs and aging indicators.</p>
     </a>
   </div>
 </body>
