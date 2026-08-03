@@ -55,22 +55,26 @@
 
   <script>
     async function loadPipelineData() {
+      // Preserve open tray indices before refreshing
+      const openIndices = new Set();
+      document.querySelectorAll('.detail-row').forEach((row, idx) => {
+        if (row.style.display === 'table-row') {
+          openIndices.add(idx);
+        }
+      });
+
       const tbody = document.getElementById('pipeline-tbody');
       try {
         const response = await fetch('/api/sales-pipeline');
         const data = await response.json();
 
-        tbody.innerHTML = '';
+        // Render rows
+        let newHtml = '';
         data.pipeline.forEach((row, index) => {
           const isContacted = !!row.contacted_by;
           const commList = row.commodities.length > 0 ? row.commodities.join(', ') : 'ALL PRODUCE';
           const cleanPhone = row.phone ? row.phone.replace(/[^0-9]/g, '') : '';
 
-          // 1. Main Buyer Row
-          const tr = document.createElement('tr');
-          tr.className = `clickable-row ${isContacted ? 'contacted' : ''}`;
-          tr.id = `buyer-row-${index}`;
-          
           let actionHtml = '';
           if (isContacted) {
             actionHtml = `<span class="contact-badge">🔒 Contacted by ${row.contacted_by}</span>`;
@@ -78,44 +82,48 @@
             actionHtml = `<a id="wa-btn-${index}" href="#" target="_blank" class="btn-wa" onclick="onWhatsAppClick(event, '${escapeQuotes(row.buyer)}', ${index})">💬 WhatsApp</a>`;
           }
 
-          tr.innerHTML = `
-            <td onclick="toggleTray(${index}, '${escapeQuotes(row.buyer)}')">#${index + 1}</td>
-            <td onclick="toggleTray(${index}, '${escapeQuotes(row.buyer)}')"><strong>${row.buyer}</strong> ▾</td>
-            <td onclick="toggleTray(${index}, '${escapeQuotes(row.buyer)}')">R ${row.total_spent.toLocaleString('en-ZA', {minimumFractionDigits: 2})}</td>
-            <td onclick="toggleTray(${index}, '${escapeQuotes(row.buyer)}')">${row.total_units.toLocaleString()}</td>
-            <td onclick="toggleTray(${index}, '${escapeQuotes(row.buyer)}')">${commList}</td>
-            <td>${actionHtml}</td>
-          `;
+          const isOpen = openIndices.has(index);
 
-          // 2. Expandable Inline Match Detail Row
-          const detailTr = document.createElement('tr');
-          detailTr.className = 'detail-row';
-          detailTr.id = `detail-row-${index}`;
-          detailTr.innerHTML = `
-            <td colspan="6">
-              <div class="match-tray">
-                <div class="match-header">
-                  <span>Select Product Matches to Include in Message:</span>
-                  <label style="cursor:pointer;"><input type="checkbox" checked id="select-all-${index}" onchange="toggleSelectAll(${index})"> <strong>Select All</strong></label>
+          // Preserve existing match tray content if it was already expanded
+          const existingGrid = document.getElementById(`match-grid-${index}`);
+          const gridContent = existingGrid ? existingGrid.innerHTML : 'Loading match items...';
+          const isLoaded = existingGrid && existingGrid.dataset.loaded ? 'data-loaded="true"' : '';
+
+          newHtml += `
+            <tr id="buyer-row-${index}" class="clickable-row ${isContacted ? 'contacted' : ''}" data-phone="${cleanPhone}" data-buyer="${escapeQuotes(row.buyer)}">
+              <td onclick="toggleTray(${index}, '${escapeQuotes(row.buyer)}')">#${index + 1}</td>
+              <td onclick="toggleTray(${index}, '${escapeQuotes(row.buyer)}')"><strong>${row.buyer}</strong> ▾</td>
+              <td onclick="toggleTray(${index}, '${escapeQuotes(row.buyer)}')">R ${row.total_spent.toLocaleString('en-ZA', {minimumFractionDigits: 2})}</td>
+              <td onclick="toggleTray(${index}, '${escapeQuotes(row.buyer)}')">${row.total_units.toLocaleString()}</td>
+              <td onclick="toggleTray(${index}, '${escapeQuotes(row.buyer)}')">${commList}</td>
+              <td>${actionHtml}</td>
+            </tr>
+            <tr id="detail-row-${index}" class="detail-row" style="display: ${isOpen ? 'table-row' : 'none'};">
+              <td colspan="6">
+                <div class="match-tray">
+                  <div class="match-header">
+                    <span>Select Product Matches to Include in Message:</span>
+                    <label style="cursor:pointer;"><input type="checkbox" checked id="select-all-${index}" onchange="toggleSelectAll(${index})"> <strong>Select All</strong></label>
+                  </div>
+                  <div class="match-grid" id="match-grid-${index}" ${isLoaded}>${gridContent}</div>
                 </div>
-                <div class="match-grid" id="match-grid-${index}">Loading match items...</div>
-              </div>
-            </td>
+              </td>
+            </tr>
           `;
-
-          tbody.appendChild(tr);
-          tbody.appendChild(detailTr);
-
-          // Store initial state data
-          tr.dataset.phone = cleanPhone;
-          tr.dataset.buyer = row.buyer;
         });
+
+        tbody.innerHTML = newHtml;
+
+        // Re-calculate active WhatsApp links for open rows
+        openIndices.forEach(idx => updateWhatsAppUrl(idx));
+
       } catch (err) {
-        tbody.innerHTML = '<tr><td colspan="6">Error loading pipeline data.</td></tr>';
+        if (tbody.children.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="6">Error loading pipeline data.</td></tr>';
+        }
       }
     }
 
-    // Toggle inline expansion tray and fetch matches
     async function toggleTray(index, buyerName) {
       const detailRow = document.getElementById(`detail-row-${index}`);
       const grid = document.getElementById(`match-grid-${index}`);
@@ -139,7 +147,7 @@
       }
 
       grid.innerHTML = '';
-      matches.forEach((item, mIdx) => {
+      matches.forEach((item) => {
         const itemLabel = `${item.commodity} (${item.pack})`;
         const card = document.createElement('div');
         card.className = 'match-card';
@@ -153,7 +161,6 @@
       updateWhatsAppUrl(index);
     }
 
-    // Toggle all checkboxes for a buyer
     function toggleSelectAll(index) {
       const masterBox = document.getElementById(`select-all-${index}`);
       const checkboxes = document.querySelectorAll(`.comm-checkbox-${index}`);
@@ -161,11 +168,10 @@
       updateWhatsAppUrl(index);
     }
 
-    // Dynamically generate WhatsApp URL based on checked boxes
     function updateWhatsAppUrl(index) {
       const mainRow = document.getElementById(`buyer-row-${index}`);
       const waBtn = document.getElementById(`wa-btn-${index}`);
-      if (!waBtn) return;
+      if (!waBtn || !mainRow) return;
 
       const phone = mainRow.dataset.phone;
       const buyer = mainRow.dataset.buyer;
@@ -189,7 +195,6 @@
       waBtn.href = waUrl;
     }
 
-    // Handle WhatsApp button click and lock buyer row
     async function onWhatsAppClick(event, buyerName, index) {
       event.preventDefault();
       const waBtn = document.getElementById(`wa-btn-${index}`);
