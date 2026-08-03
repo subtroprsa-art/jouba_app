@@ -4,10 +4,10 @@ import os
 import psycopg2
 from psycopg2.extras import execute_values
 from flask import Flask, render_template, request, jsonify
+from datetime import datetime
 
 app = Flask(__name__)
 
-# Neon Connection String from environment variable (or fallback for local testing)
 DB_URI = os.getenv(
     "DATABASE_URL",
     "postgresql://neondb_owner:YOUR_PASSWORD@ep-shiny-snow-ay06dic8-pooler.c-5.us-east-2.aws.neon.tech/neondb?sslmode=require"
@@ -17,7 +17,7 @@ def get_db_connection():
     return psycopg2.connect(DB_URI)
 
 # ------------------------------------------------------------------
-# Health & Web Interface Endpoints
+# Health & Dashboard Endpoints
 # ------------------------------------------------------------------
 
 @app.route('/')
@@ -31,20 +31,78 @@ def home():
 def health():
     return jsonify({"status": "ok", "message": "Service is healthy"}), 200
 
-@app.route('/process-coldstore-slip', methods=['POST'])
-def process_coldstore_slip():
-    data = request.get_json(silent=True) or request.form.to_dict()
+@app.route('/api/dashboard-kpis', methods=['GET'])
+def get_dashboard_kpis():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT COALESCE(SUM(qty_rec - qty_sold), 0) FROM stock_records;")
+    total_stock = cursor.fetchone()[0]
+    
+    cursor.execute("SELECT COALESCE(SUM(qty_rec), 0), COALESCE(SUM(qty_sold), 0) FROM stock_records;")
+    total_rec, total_sold = cursor.fetchone()
+    clearance_rate = round((total_sold / total_rec * 100), 1) if total_rec > 0 else 0.0
+    
+    cursor.execute("""
+        SELECT COALESCE(SUM(qty_rec - qty_sold), 0) 
+        FROM stock_records 
+        WHERE created_at < NOW() - INTERVAL '14 days';
+    """)
+    urgent_stock = cursor.fetchone()[0]
+    
+    cursor.close()
+    conn.close()
+    
     return jsonify({
-        "status": "success",
-        "message": "Coldstore slip received successfully",
-        "data_received": data
-    }), 200
+        "total_stock": total_stock,
+        "clearance_rate": f"{clearance_rate}%",
+        "urgent_stock": urgent_stock
+    })
+
+@app.route('/api/sales-pipeline', methods=['GET'])
+def run_sales_pipeline():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    query = """
+    WITH current_stock AS (
+        SELECT DISTINCT commodity 
+        FROM stock_records 
+        WHERE (qty_rec - qty_sold) > 0
+    )
+    SELECT 
+        b.buyer,
+        SUM(b.total) AS total_spent,
+        SUM(b.qty) AS total_units_bought,
+        STRING_AGG(DISTINCT b.commodity, ', ') AS matched_commodities
+    FROM buyer_history b
+    JOIN current_stock s ON UPPER(b.commodity) = UPPER(s.commodity)
+    GROUP BY b.buyer
+    ORDER BY total_spent DESC
+    LIMIT 30;
+    """
+    
+    cursor.execute(query)
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    
+    top_buyers = []
+    for rank, row in enumerate(rows, 1):
+        top_buyers.append({
+            "rank": rank,
+            "buyer": row[0],
+            "total_spent": float(row[1] or 0),
+            "units_bought": row[2],
+            "commodities": row[3]
+        })
+        
+    return jsonify({"status": "success", "top_30_buyers": top_buyers})
 
 # ------------------------------------------------------------------
-# CSV / TXT Upload Endpoints (Clears Old Data First)
+# CSV / TXT Upload Endpoints
 # ------------------------------------------------------------------
 
-# Stock CSV / TXT upload
 @app.route('/upload-stock', methods=['POST'])
 def upload_stock():
     if 'file' not in request.files:
@@ -85,10 +143,7 @@ def upload_stock():
     if records:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
-        # 🗑️ Wipe previous stock records so only the latest remains
         cursor.execute("TRUNCATE TABLE stock_records;")
-        
         query = """
         INSERT INTO stock_records (
             grn, producer, commodity, pack, variety, grade, size, count, 
@@ -99,11 +154,10 @@ def upload_stock():
         conn.commit()
         cursor.close()
         conn.close()
-        return f"✅ Database wiped & updated with {len(records)} NEW Stock Records!"
+        return f"✅ Database updated with {len(records)} Stock Records!"
 
-    return "⚠️ No valid stock records found.", 400
+    return "⚠️ No valid records found.", 400
 
-# Floor CSV / TXT upload
 @app.route('/upload-floor', methods=['POST'])
 def upload_floor():
     if 'file' not in request.files:
@@ -143,10 +197,7 @@ def upload_floor():
     if records:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
-        # 🗑️ Wipe previous floor records so only the latest remains
         cursor.execute("TRUNCATE TABLE floor_records;")
-        
         query = """
         INSERT INTO floor_records (
             grn, seq_no, producer, commodity, pack, variety, grade, size, count, qty_floor, coldstore
@@ -156,72 +207,89 @@ def upload_floor():
         conn.commit()
         cursor.close()
         conn.close()
-        return f"✅ Database wiped & updated with {len(records)} NEW Floor Records!"
+        return f"✅ Database updated with {len(records)} Floor Records!"
 
-    return "⚠️ No valid floor records found.", 400
+    return "⚠️ No valid records found.", 400
 
 # ------------------------------------------------------------------
+# OCR Webhook & Contact Endpoints
+# ------------------------------------------------------------------
 
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+@app.route('/process-coldstore-slip', methods=['POST'])
+def process_coldstore_slip():
+    data = request.get_json(silent=True) or request.form.to_dict()
+    if not data:
+        return jsonify({"status": "error", "message": "No data received"}), 400
 
-from datetime import datetime
+    date_val = data.get('date', '')
+    buyer = data.get('buyer', '').strip().upper()
+    producer = data.get('producer', 'UNKNOWN').strip().upper()
+    commodity = data.get('commodity', '').strip().upper()
+    pack = data.get('pack', '').strip().upper()
+    qty = int(data.get('qty', 0) or 0)
+    price = float(data.get('price', 0) or 0.0)
+    total = float(data.get('total', 0) or 0.0)
 
-# Buyer History CSV / TXT upload
-@app.route('/upload-buyer-history', methods=['POST'])
-def upload_buyer_history():
-    if 'file' not in request.files:
-        return "No file uploaded", 400
+    if 'AVOCADO' in commodity or commodity == 'AVO':
+        commodity = 'AVOS'
+
+    if buyer and commodity:
+        conn = get_db_connection()
+        cursor = conn.cursor()
         
-    file = request.files['file']
-    content = file.read().decode('utf-8', errors='ignore')
-    f = io.StringIO(content.strip())
-    reader = csv.DictReader(f, delimiter='\t')
-    
-    records = []
-    for row in reader:
-        buyer = row.get('buyer') or row.get('BUYER')
-        if not buyer or not str(buyer).strip():
-            continue
-            
-        raw_date = row.get('date') or row.get('DATE') or ''
         parsed_date = None
-        if raw_date:
+        if date_val:
             try:
-                # Converts '18/07/2026' to '2026-07-18' for PostgreSQL DATE
-                parsed_date = datetime.strptime(raw_date.strip(), '%d/%m/%Y').strftime('%Y-%m-%d')
+                parsed_date = datetime.strptime(date_val.strip(), '%d/%m/%Y').strftime('%Y-%m-%d')
             except ValueError:
                 parsed_date = None
 
-        records.append((
-            parsed_date,
-            str(buyer).strip(),
-            row.get('producer', '').strip(),
-            row.get('commodity', '').strip(),
-            row.get('pack', '').strip(),
-            int(row.get('qty', 0) or 0),
-            float(row.get('price', 0) or 0.0),
-            float(row.get('total', 0) or 0.0)
-        ))
+        query = """
+        INSERT INTO buyer_history (
+            purchase_date, buyer, producer, commodity, pack, qty, price, total
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s);
+        """
+        cursor.execute(query, (parsed_date, buyer, producer, commodity, pack, qty, price, total))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return jsonify({"status": "success", "message": f"Recorded slip for {buyer}"}), 200
+
+    return jsonify({"status": "error", "message": "Missing required fields"}), 400
+
+@app.route('/upload-buyer-phones', methods=['POST'])
+def upload_buyer_phones():
+    data = request.get_json(silent=True) or []
+    if not isinstance(data, list):
+        return jsonify({"status": "error", "message": "Expected JSON array of contacts"}), 400
+
+    records = []
+    for item in data:
+        buyer = item.get('buyerName', '').strip().upper()
+        if buyer:
+            records.append((
+                buyer,
+                item.get('phone', '').strip(),
+                item.get('contactName', '').strip()
+            ))
 
     if records:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
-        # 🗑️ Wipe old history so only the latest full report is active
-        cursor.execute("TRUNCATE TABLE buyer_history;")
-        
         query = """
-        INSERT INTO buyer_history (
-            purchase_date, buyer, producer, commodity, pack, qty, price, total
-        ) VALUES %s;
+        INSERT INTO buyer_phones (buyer_name, phone, contact_name)
+        VALUES %s
+        ON CONFLICT (buyer_name) 
+        DO UPDATE SET phone = EXCLUDED.phone, contact_name = EXCLUDED.contact_name;
         """
         execute_values(cursor, query, records)
         conn.commit()
         cursor.close()
         conn.close()
-        return f"✅ Database updated with {len(records)} NEW Buyer History Records!"
+        return jsonify({"status": "success", "message": f"Synced {len(records)} buyer phone contacts"}), 200
 
-    return "⚠️ No valid buyer history records found.", 400
+    return jsonify({"status": "error", "message": "No valid contact records found"}), 400
 
+if __name__ == '__main__':
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
