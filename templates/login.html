@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Login - JDW Fresh Produce</title>
+  <title>Login - JDW Fresh Portal</title>
   <style>
     body { font-family: sans-serif; background: #0f172a; display: flex; height: 100vh; justify-content: center; align-items: center; margin: 0; }
-    .card { background: white; padding: 40px; border-radius: 12px; width: 320px; box-shadow: 0 4px 6px rgba(0,0,0,0.2); text-align: center; }
+    .card { background: white; padding: 40px; border-radius: 12px; width: 340px; box-shadow: 0 4px 6px rgba(0,0,0,0.2); text-align: center; }
     h2 { margin-bottom: 24px; color: #0f172a; }
-    input[type="password"] { width: 100%; padding: 12px; margin-bottom: 16px; border: 1px solid #cbd5e1; border-radius: 6px; box-sizing: border-box; }
-    button { width: 100%; padding: 12px; background: #22c55e; border: none; color: white; font-weight: bold; border-radius: 6px; cursor: pointer; }
+    select, input[type="password"] { width: 100%; padding: 12px; margin-bottom: 16px; border: 1px solid #cbd5e1; border-radius: 6px; box-sizing: border-box; font-size: 14px; }
+    button { width: 100%; padding: 12px; background: #22c55e; border: none; color: white; font-weight: bold; border-radius: 6px; cursor: pointer; font-size: 15px; }
     button:hover { background: #16a34a; }
     .error { color: #ef4444; font-size: 14px; margin-bottom: 12px; }
   </style>
@@ -18,8 +18,13 @@
     <h2>JDW Fresh Portal</h2>
     {% if error %}<div class="error">{{ error }}</div>{% endif %}
     <form method="POST">
-      <input type="password" name="password" placeholder="Enter Access Password" required autofocus>
-      <button type="submit">Unlock Dashboard</button>
+      <select name="username" required>
+        <option value="" disabled selected>Select User</option>
+        <option value="riaan">Riaan Joubert</option>
+        <option value="christoff">Christoff de Wet</option>
+      </select>
+      <input type="password" name="password" placeholder="Enter Password" required>
+      <button type="submit">Log In</button>
     </form>
   </div>
 </body>

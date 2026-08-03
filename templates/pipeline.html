@@ -4,68 +4,108 @@
   <meta charset="UTF-8">
   <title>Sales Pipeline - JDW Fresh</title>
   <style>
-    body { font-family: sans-serif; background: #f8fafc; padding: 24px; margin: 0; }
+    body { font-family: sans-serif; background: #f8fafc; padding: 24px; margin: 0; color: #1e293b; }
     .nav { margin-bottom: 24px; display: flex; justify-content: space-between; align-items: center; }
     .btn-back { background: #e2e8f0; color: #334155; padding: 8px 16px; text-decoration: none; border-radius: 6px; font-weight: bold; }
+    .user-tag { font-size: 14px; background: #dcfce7; color: #166534; padding: 6px 12px; border-radius: 20px; font-weight: bold; }
     table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
     th, td { padding: 12px 16px; text-align: left; border-bottom: 1px solid #f1f5f9; }
     th { background: #f8fafc; font-size: 12px; text-transform: uppercase; color: #64748b; }
-    select { padding: 6px 10px; border-radius: 6px; border: 1px solid #cbd5e1; }
-    .btn-wa { background: #22c55e; color: white; padding: 6px 12px; text-decoration: none; border-radius: 6px; font-weight: bold; }
+    tr.clickable-row { cursor: pointer; }
+    tr.clickable-row:hover { background: #f1f5f9; }
+    
+    /* Strikethrough & Lock CSS */
+    tr.contacted { background: #f1f5f9; opacity: 0.65; text-decoration: line-through; }
+    .contact-badge { font-size: 12px; background: #fee2e2; color: #991b1b; padding: 4px 8px; border-radius: 4px; font-weight: bold; text-decoration: none; display: inline-block; }
+    .btn-wa { background: #22c55e; color: white; padding: 6px 14px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-flex; align-items: center; }
+    .btn-wa.disabled { background: #94a3b8; cursor: not-allowed; pointer-events: none; }
+    
+    /* Modal Window Styles */
+    .modal { display: none; position: fixed; z-index: 100; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); align-items: center; justify-content: center; }
+    .modal-content { background: white; padding: 24px; border-radius: 12px; width: 90%; max-width: 600px; max-height: 80vh; overflow-y: auto; }
+    .close-btn { float: right; font-size: 20px; font-weight: bold; cursor: pointer; }
   </style>
 </head>
 <body>
   <div class="nav">
     <a href="/dashboard" class="btn-back">⬅️ Back to Hub</a>
     <h2>Sales Team Pipeline</h2>
+    <span class="user-tag">👤 User: {{ user_name }}</span>
   </div>
 
   <table>
     <thead>
       <tr>
         <th>Rank</th>
-        <th>Buyer</th>
+        <th>Buyer (Click for Details)</th>
         <th>Total Spent</th>
         <th>Units Bought</th>
-        <th>Commodity Offer</th>
+        <th>Matched Commodities</th>
         <th>Action</th>
       </tr>
     </thead>
     <tbody id="pipeline-tbody">
-      <tr><td colspan="6">Loading pipeline data...</td></tr>
+      <tr><td colspan="6">Loading pipeline matches...</td></tr>
     </tbody>
   </table>
 
+  <!-- Modal for Buyer Match Breakdown -->
+  <div id="buyerModal" class="modal">
+    <div class="modal-content">
+      <span class="close-btn" onclick="closeModal()">&times;</span>
+      <h3 id="modalBuyerTitle">Buyer Matches</h3>
+      <table style="width:100%; border:1px solid #e2e8f0;">
+        <thead>
+          <tr style="background:#f8fafc;">
+            <th>Commodity</th>
+            <th>Pack / Size</th>
+            <th>Total Qty Bought</th>
+          </tr>
+        </thead>
+        <tbody id="modal-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
   <script>
+    let currentPipelineData = [];
+
     async function loadPipelineData() {
       const tbody = document.getElementById('pipeline-tbody');
       try {
         const response = await fetch('/api/sales-pipeline');
         const data = await response.json();
+        currentPipelineData = data.pipeline;
+
         tbody.innerHTML = '';
-        data.forEach((row, index) => {
+        data.pipeline.forEach((row, index) => {
           const tr = document.createElement('tr');
-          const optionsHtml = row.commodities.map(c => `<option value="${c}">${c}</option>`).join('');
-          const firstProduct = row.commodities[0] || 'produce';
-          const initialMsg = `Good day ${row.buyer}. We have ${firstProduct} available for you today. Interested?`;
+          const isContacted = !!row.contacted_by;
+          if (isContacted) tr.classList.add('contacted');
+          tr.classList.add('clickable-row');
+
+          const commList = row.commodities.length > 0 ? row.commodities.join(', ') : 'ALL PRODUCE';
+          const defaultProduct = row.commodities[0] || 'produce';
+          const msg = `Good day ${row.buyer}. We have ${defaultProduct} available for you today. Interested?`;
           const cleanPhone = row.phone ? row.phone.replace(/[^0-9]/g, '') : '';
-          const initialWaUrl = cleanPhone 
-            ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(initialMsg)}`
-            : `https://wa.me/?text=${encodeURIComponent(initialMsg)}`;
+          const waUrl = cleanPhone 
+            ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}`
+            : `https://wa.me/?text=${encodeURIComponent(msg)}`;
+
+          let actionHtml = '';
+          if (isContacted) {
+            actionHtml = `<span class="contact-badge">🔒 Contacted by ${row.contacted_by}</span>`;
+          } else {
+            actionHtml = `<a href="${waUrl}" target="_blank" class="btn-wa" onclick="onWhatsAppClick(event, '${escapeQuotes(row.buyer)}', '${waUrl}')">💬 WhatsApp</a>`;
+          }
 
           tr.innerHTML = `
             <td>#${index + 1}</td>
-            <td><strong>${row.buyer}</strong></td>
-            <td>R ${row.total_spent.toLocaleString('en-ZA', {minimumFractionDigits: 2})}</td>
-            <td>${row.total_units.toLocaleString()}</td>
-            <td>
-              <select onchange="onCommodityChange(this, '${escapeQuotes(row.buyer)}', '${row.phone}')">
-                ${optionsHtml}
-              </select>
-            </td>
-            <td>
-              <a href="${initialWaUrl}" target="_blank" class="btn-wa">💬 WhatsApp</a>
-            </td>
+            <td onclick="openBuyerModal('${escapeQuotes(row.buyer)}')"><strong>${row.buyer}</strong></td>
+            <td onclick="openBuyerModal('${escapeQuotes(row.buyer)}')">R ${row.total_spent.toLocaleString('en-ZA', {minimumFractionDigits: 2})}</td>
+            <td onclick="openBuyerModal('${escapeQuotes(row.buyer)}')">${row.total_units.toLocaleString()}</td>
+            <td onclick="openBuyerModal('${escapeQuotes(row.buyer)}')">${commList}</td>
+            <td>${actionHtml}</td>
           `;
           tbody.appendChild(tr);
         });
@@ -74,18 +114,51 @@
       }
     }
 
-    function onCommodityChange(selectEl, buyerName, phone) {
-      const selectedProduct = selectEl.value;
-      const row = selectEl.closest('tr');
-      const waButton = row.querySelector('.btn-wa');
-      const customMessage = `Good day ${buyerName}. We have ${selectedProduct} available for you today. Interested?`;
-      const cleanPhone = phone ? phone.replace(/[^0-9]/g, '') : '';
-      waButton.href = cleanPhone 
-        ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(customMessage)}`
-        : `https://wa.me/?text=${encodeURIComponent(customMessage)}`;
+    // Handles clicking WhatsApp: opens window and claims lock status on backend
+    async function onWhatsAppClick(event, buyerName, waUrl) {
+      event.preventDefault();
+      window.open(waUrl, '_blank');
+      
+      await fetch('/api/mark-contacted', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ buyer: buyerName })
+      });
+      
+      // Reload pipeline to lock buyer row instantly
+      loadPipelineData();
+    }
+
+    // Modal popup to list commodities, pack, and size breakdown
+    async function openBuyerModal(buyerName) {
+      document.getElementById('modalBuyerTitle').innerText = buyerName + " - Historical Pack & Size Matches";
+      const tbody = document.getElementById('modal-tbody');
+      tbody.innerHTML = '<tr><td colspan="3">Loading item matches...</td></tr>';
+      document.getElementById('buyerModal').style.display = 'flex';
+
+      const res = await fetch(`/api/buyer-details/${encodeURIComponent(buyerName)}`);
+      const details = await res.json();
+
+      tbody.innerHTML = '';
+      details.forEach(item => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td><strong>${item.commodity}</strong></td>
+          <td>${item.pack}</td>
+          <td>${item.total_qty} units</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function closeModal() {
+      document.getElementById('buyerModal').style.display = 'none';
     }
 
     function escapeQuotes(str) { return str.replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
+
+    // Auto-refresh pipeline every 15 seconds so Riaan and Christoff see lock updates live
+    setInterval(loadPipelineData, 15000);
     document.addEventListener('DOMContentLoaded', loadPipelineData);
   </script>
 </body>

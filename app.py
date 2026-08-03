@@ -6,8 +6,11 @@ from flask import Flask, request, jsonify, render_template, redirect, url_for, s
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "jdw-fresh-secret-key-2026")
 
-# Set master password for your sales team
-DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "jdw2026")
+# Defined Team Users & Passwords
+USER_ACCOUNTS = {
+    "riaan": {"name": "Riaan Joubert", "pass": os.environ.get("RIAAN_PASSWORD", "riaan2026")},
+    "christoff": {"name": "Christoff de Wet", "pass": os.environ.get("CHRISTOFF_PASSWORD", "christoff2026")}
+}
 
 def get_db_connection():
     return psycopg2.connect(
@@ -15,57 +18,54 @@ def get_db_connection():
         cursor_factory=RealDictCursor
     )
 
-def is_logged_in():
-    return session.get("logged_in") is True
+def get_current_user():
+    return session.get("user_fullname")
 
-# --- ROUTE 1: LOGIN & LOGOUT ---
+# --- AUTHENTICATION ROUTES ---
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     error = None
     if request.method == 'POST':
-        password = request.form.get('password')
-        if password == DASHBOARD_PASSWORD:
+        username = request.form.get('username', '').strip().lower()
+        password = request.form.get('password', '').strip()
+
+        if username in USER_ACCOUNTS and USER_ACCOUNTS[username]["pass"] == password:
             session['logged_in'] = True
+            session['user_id'] = username
+            session['user_fullname'] = USER_ACCOUNTS[username]["name"]
             return redirect(url_for('dashboard'))
         else:
-            error = "Invalid Password. Please try again."
+            error = "Invalid username or password."
     return render_template('login.html', error=error)
 
 @app.route('/logout')
 def logout():
-    session.pop('logged_in', None)
+    session.clear()
     return redirect(url_for('login'))
 
-# --- ROUTE 2: MAIN LANDING DASHBOARD (HUB) ---
 @app.route('/')
 @app.route('/dashboard')
 def dashboard():
-    if not is_logged_in():
+    if not session.get('logged_in'):
         return redirect(url_for('login'))
-    return render_template('dashboard.html')
+    return render_template('dashboard.html', user_name=get_current_user())
 
-# --- ROUTE 3: DEDICATED FUNCTION PAGES ---
 @app.route('/pipeline')
 def pipeline_page():
-    if not is_logged_in():
+    if not session.get('logged_in'):
         return redirect(url_for('login'))
-    return render_template('pipeline.html')
+    return render_template('pipeline.html', user_name=get_current_user())
 
-@app.route('/contacts')
-def contacts_page():
-    if not is_logged_in():
-        return redirect(url_for('login'))
-    return render_template('contacts.html')
-
-# --- API ENDPOINTS ---
+# --- PIPELINE API WITH CLAIM/LOCK STATUS ---
 @app.route('/api/sales-pipeline', methods=['GET'])
 def get_sales_pipeline():
-    if not is_logged_in():
+    if not session.get('logged_in'):
         return jsonify({"error": "Unauthorized"}), 401
 
     conn = get_db_connection()
     cursor = conn.cursor()
     
+    # Retrieves buyers, total spent, phone numbers, matching commodities, and contact tracking status
     query = """
         SELECT 
             h.buyer,
@@ -73,10 +73,17 @@ def get_sales_pipeline():
             SUM(h.total) AS total_spent,
             SUM(h.qty) AS total_units,
             p.phone,
-            ARRAY_AGG(DISTINCT h.commodity) AS matching_commodities
+            ARRAY_AGG(DISTINCT h.commodity) AS matching_commodities,
+            l.contacted_by,
+            l.contacted_at
         FROM buyer_history h
         LEFT JOIN buyer_phones p ON UPPER(h.buyer) = UPPER(p.buyer_name)
-        GROUP BY h.buyer, p.phone
+        LEFT JOIN (
+            SELECT DISTINCT ON (buyer) buyer, contacted_by, contacted_at
+            FROM buyer_contact_log
+            ORDER BY buyer, contacted_at DESC
+        ) l ON UPPER(h.buyer) = UPPER(l.buyer)
+        GROUP BY h.buyer, p.phone, l.contacted_by, l.contacted_at
         ORDER BY total_spent DESC;
     """
     try:
@@ -84,22 +91,74 @@ def get_sales_pipeline():
         results = cursor.fetchall()
         pipeline = []
         for row in results:
-            commodities = row['matching_commodities'] if row['matching_commodities'] else ['ALL PRODUCE']
+            commodities = row['matching_commodities'] if row['matching_commodities'] else []
             pipeline.append({
                 "buyer": row['buyer'],
                 "total_spent": float(row['total_spent'] or 0.0),
                 "total_units": int(row['total_units'] or 0),
                 "phone": row['phone'] or '',
-                "commodities": commodities
+                "commodities": commodities,
+                "contacted_by": row['contacted_by'],
+                "contacted_at": row['contacted_at'].strftime('%Y-%m-%d %H:%M') if row['contacted_at'] else None
             })
         cursor.close()
         conn.close()
-        return jsonify(pipeline), 200
+        return jsonify({"pipeline": pipeline, "current_user": get_current_user()}), 200
     except Exception as e:
         if cursor: cursor.close()
         if conn: conn.close()
         return jsonify({"error": str(e)}), 500
 
+# API to fetch detailed pack/size commodity matches for a specific buyer modal
+@app.route('/api/buyer-details/<path:buyer_name>', methods=['GET'])
+def get_buyer_details(buyer_name):
+    if not session.get('logged_in'):
+        return jsonify({"error": "Unauthorized"}), 401
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    query = """
+        SELECT commodity, pack, SUM(qty) as total_qty, MAX(date) as last_purchased
+        FROM buyer_history
+        WHERE UPPER(buyer) = UPPER(%s)
+        GROUP BY commodity, pack
+        ORDER BY total_qty DESC;
+    """
+    cursor.execute(query, (buyer_name,))
+    matches = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return jsonify(matches), 200
+
+# API Endpoint to register WhatsApp contact action and lock out buyer
+@app.route('/api/mark-contacted', methods=['POST'])
+def mark_contacted():
+    if not session.get('logged_in'):
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.get_json() or {}
+    buyer = data.get('buyer', '').strip()
+    user_name = get_current_user()
+
+    if not buyer:
+        return jsonify({"error": "Buyer name required"}), 400
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    query = """
+        INSERT INTO buyer_contact_log (buyer, contacted_by)
+        VALUES (%s, %s);
+    """
+    cursor.execute(query, (buyer, user_name))
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+    return jsonify({"status": "success", "contacted_by": user_name}), 200
+
+# Endpoint to handle slip processing
 @app.route('/process-buyer-slip', methods=['POST'])
 def process_buyer_slip():
     data = request.get_json() or {}
@@ -109,7 +168,7 @@ def process_buyer_slip():
     price, total = data.get('price', 0.0), data.get('total', 0.0)
 
     if not buyer or not commodity:
-        return jsonify({"error": "Missing required details"}), 400
+        return jsonify({"error": "Missing details"}), 400
 
     conn = get_db_connection()
     cursor = conn.cursor()
