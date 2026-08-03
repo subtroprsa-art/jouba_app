@@ -7,7 +7,7 @@ from flask import Flask, render_template, request, jsonify
 
 app = Flask(__name__)
 
-# Neon Connection String from environment variable (or fallback)
+# Neon Connection String from environment variable (or fallback for local testing)
 DB_URI = os.getenv(
     "DATABASE_URL",
     "postgresql://neondb_owner:YOUR_PASSWORD@ep-shiny-snow-ay06dic8-pooler.c-5.us-east-2.aws.neon.tech/neondb?sslmode=require"
@@ -17,10 +17,9 @@ def get_db_connection():
     return psycopg2.connect(DB_URI)
 
 # ------------------------------------------------------------------
-# Health & Status Endpoints
+# Health & Web Interface Endpoints
 # ------------------------------------------------------------------
 
-# Serve upload webpage (UI)
 @app.route('/')
 def home():
     try:
@@ -28,16 +27,13 @@ def home():
     except Exception:
         return "App is running!", 200
 
-# Health check endpoint (for monitoring / Google Apps Script)
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({"status": "ok", "message": "Service is healthy"}), 200
 
-# Coldstore slip processing endpoint
 @app.route('/process-coldstore-slip', methods=['POST'])
 def process_coldstore_slip():
     data = request.get_json(silent=True) or request.form.to_dict()
-    # Add your coldstore slip handling logic here as needed
     return jsonify({
         "status": "success",
         "message": "Coldstore slip received successfully",
@@ -45,17 +41,17 @@ def process_coldstore_slip():
     }), 200
 
 # ------------------------------------------------------------------
-# CSV Upload Endpoints
+# CSV / TXT Upload Endpoints (Clears Old Data First)
 # ------------------------------------------------------------------
 
-# Stock CSV upload
+# Stock CSV / TXT upload
 @app.route('/upload-stock', methods=['POST'])
 def upload_stock():
     if 'file' not in request.files:
         return "No file uploaded", 400
     
     file = request.files['file']
-    content = file.read().decode('utf-8')
+    content = file.read().decode('utf-8', errors='ignore')
     f = io.StringIO(content.strip())
     reader = csv.DictReader(f, delimiter='\t')
     
@@ -89,34 +85,32 @@ def upload_stock():
     if records:
         conn = get_db_connection()
         cursor = conn.cursor()
+        
+        # 🗑️ Wipe previous stock records so only the latest remains
+        cursor.execute("TRUNCATE TABLE stock_records;")
+        
         query = """
         INSERT INTO stock_records (
             grn, producer, commodity, pack, variety, grade, size, count, 
             qty_rec, qty_sort, qty_sold, qty_floor, coldstore
-        ) VALUES %s
-        ON CONFLICT (grn) DO UPDATE SET
-            producer = EXCLUDED.producer, commodity = EXCLUDED.commodity,
-            pack = EXCLUDED.pack, variety = EXCLUDED.variety, grade = EXCLUDED.grade,
-            size = EXCLUDED.size, count = EXCLUDED.count, qty_rec = EXCLUDED.qty_rec,
-            qty_sort = EXCLUDED.qty_sort, qty_sold = EXCLUDED.qty_sold,
-            qty_floor = EXCLUDED.qty_floor, coldstore = EXCLUDED.coldstore;
+        ) VALUES %s;
         """
         execute_values(cursor, query, records)
         conn.commit()
         cursor.close()
         conn.close()
-        return f"✅ Successfully synced {len(records)} Stock Records to Neon!"
+        return f"✅ Database wiped & updated with {len(records)} NEW Stock Records!"
 
-    return "⚠️ No valid records found.", 400
+    return "⚠️ No valid stock records found.", 400
 
-# Floor CSV upload
+# Floor CSV / TXT upload
 @app.route('/upload-floor', methods=['POST'])
 def upload_floor():
     if 'file' not in request.files:
         return "No file uploaded", 400
         
     file = request.files['file']
-    content = file.read().decode('utf-8')
+    content = file.read().decode('utf-8', errors='ignore')
     f = io.StringIO(content.strip())
     reader = csv.DictReader(f, delimiter='\t')
     
@@ -149,21 +143,20 @@ def upload_floor():
     if records:
         conn = get_db_connection()
         cursor = conn.cursor()
+        
+        # 🗑️ Wipe previous floor records so only the latest remains
+        cursor.execute("TRUNCATE TABLE floor_records;")
+        
         query = """
         INSERT INTO floor_records (
             grn, seq_no, producer, commodity, pack, variety, grade, size, count, qty_floor, coldstore
-        ) VALUES %s
-        ON CONFLICT (grn, seq_no) DO UPDATE SET
-            producer = EXCLUDED.producer, commodity = EXCLUDED.commodity,
-            pack = EXCLUDED.pack, variety = EXCLUDED.variety, grade = EXCLUDED.grade,
-            size = EXCLUDED.size, count = EXCLUDED.count, qty_floor = EXCLUDED.qty_floor,
-            coldstore = EXCLUDED.coldstore;
+        ) VALUES %s;
         """
         execute_values(cursor, query, records)
         conn.commit()
         cursor.close()
         conn.close()
-        return f"✅ Successfully synced {len(records)} Floor Records to Neon!"
+        return f"✅ Database wiped & updated with {len(records)} NEW Floor Records!"
 
     return "⚠️ No valid floor records found.", 400
 
