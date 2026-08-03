@@ -6,7 +6,7 @@ from flask import Flask, request, jsonify, render_template, redirect, url_for, s
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "jdw-fresh-secret-key-2026")
 
-# Defined Team Users & Passwords
+# Team Credentials
 USER_ACCOUNTS = {
     "riaan": {"name": "Riaan Joubert", "pass": os.environ.get("RIAAN_PASSWORD", "riaan2026")},
     "christoff": {"name": "Christoff de Wet", "pass": os.environ.get("CHRISTOFF_PASSWORD", "christoff2026")}
@@ -43,6 +43,7 @@ def logout():
     session.clear()
     return redirect(url_for('login'))
 
+# --- DASHBOARD & NAVIGATION ---
 @app.route('/')
 @app.route('/dashboard')
 def dashboard():
@@ -56,7 +57,7 @@ def pipeline_page():
         return redirect(url_for('login'))
     return render_template('pipeline.html', user_name=get_current_user())
 
-# --- PIPELINE API WITH CLAIM/LOCK STATUS ---
+# --- SALES PIPELINE API ---
 @app.route('/api/sales-pipeline', methods=['GET'])
 def get_sales_pipeline():
     if not session.get('logged_in'):
@@ -65,7 +66,6 @@ def get_sales_pipeline():
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # Retrieves buyers, total spent, phone numbers, matching commodities, and contact tracking status
     query = """
         SELECT 
             h.buyer,
@@ -77,12 +77,12 @@ def get_sales_pipeline():
             l.contacted_by,
             l.contacted_at
         FROM buyer_history h
-        LEFT JOIN buyer_phones p ON UPPER(h.buyer) = UPPER(p.buyer_name)
+        LEFT JOIN buyer_phones p ON UPPER(TRIM(h.buyer)) = UPPER(TRIM(p.buyer_name))
         LEFT JOIN (
-            SELECT DISTINCT ON (buyer) buyer, contacted_by, contacted_at
+            SELECT DISTINCT ON (UPPER(TRIM(buyer))) UPPER(TRIM(buyer)) AS buyer_clean, contacted_by, contacted_at
             FROM buyer_contact_log
-            ORDER BY buyer, contacted_at DESC
-        ) l ON UPPER(h.buyer) = UPPER(l.buyer)
+            ORDER BY UPPER(TRIM(buyer)), contacted_at DESC
+        ) l ON UPPER(TRIM(h.buyer)) = l.buyer_clean
         GROUP BY h.buyer, p.phone, l.contacted_by, l.contacted_at
         ORDER BY total_spent DESC;
     """
@@ -91,7 +91,7 @@ def get_sales_pipeline():
         results = cursor.fetchall()
         pipeline = []
         for row in results:
-            commodities = row['matching_commodities'] if row['matching_commodities'] else []
+            commodities = [c for c in (row['matching_commodities'] or []) if c]
             pipeline.append({
                 "buyer": row['buyer'],
                 "total_spent": float(row['total_spent'] or 0.0),
@@ -109,7 +109,7 @@ def get_sales_pipeline():
         if conn: conn.close()
         return jsonify({"error": str(e)}), 500
 
-# API to fetch detailed pack/size commodity matches for a specific buyer modal
+# --- BUYER MATCH DETAILS API (Splits Commodity, Pack Weight, Class, Variety) ---
 @app.route('/api/buyer-details/<path:buyer_name>', methods=['GET'])
 def get_buyer_details(buyer_name):
     if not session.get('logged_in'):
@@ -119,19 +119,65 @@ def get_buyer_details(buyer_name):
     cursor = conn.cursor()
 
     query = """
-        SELECT commodity, pack, SUM(qty) as total_qty, MAX(date) as last_purchased
+        SELECT 
+            COALESCE(commodity, 'PRODUCE') AS commodity,
+            COALESCE(pack, '') AS raw_pack,
+            COALESCE(pack_weight, '') AS pack_weight,
+            COALESCE(item_class, '') AS item_class,
+            COALESCE(variety, '') AS variety,
+            SUM(qty) AS total_qty
         FROM buyer_history
-        WHERE UPPER(buyer) = UPPER(%s)
-        GROUP BY commodity, pack
+        WHERE UPPER(TRIM(buyer)) = UPPER(TRIM(%s))
+        GROUP BY commodity, pack, pack_weight, item_class, variety
         ORDER BY total_qty DESC;
     """
-    cursor.execute(query, (buyer_name,))
-    matches = cursor.fetchall()
-    cursor.close()
-    conn.close()
-    return jsonify(matches), 200
+    try:
+        cursor.execute(query, (buyer_name,))
+        matches = cursor.fetchall()
+        
+        detail_list = []
+        for item in matches:
+            raw_pack = item['raw_pack'].strip()
+            p_weight = item['pack_weight'].strip()
+            i_class = item['item_class'].strip()
+            var = item['variety'].strip()
 
-# API Endpoint to register WhatsApp contact action and lock out buyer
+            # Dynamic string splitting fallback if separate columns are empty
+            if not p_weight or not i_class or not var:
+                tokens = raw_pack.split()
+                p_weight = p_weight or (tokens[0] if len(tokens) > 0 else 'STD')
+                
+                if not i_class:
+                    if 'C1' in raw_pack.upper() or 'CLASS 1' in raw_pack.upper():
+                        i_class = 'Class 1'
+                    elif 'C2' in raw_pack.upper() or 'CLASS 2' in raw_pack.upper():
+                        i_class = 'Class 2'
+                    else:
+                        i_class = 'Class 1'
+                        
+                if not var:
+                    var = ' '.join(tokens[2:]) if len(tokens) > 2 else 'Standard'
+
+            pack_display = f"{p_weight} {i_class} {var}".strip()
+
+            detail_list.append({
+                "commodity": item['commodity'],
+                "pack": pack_display if pack_display else raw_pack,
+                "pack_weight": p_weight,
+                "item_class": i_class,
+                "variety": var,
+                "total_qty": int(item['total_qty'] or 0)
+            })
+            
+        cursor.close()
+        conn.close()
+        return jsonify(detail_list), 200
+    except Exception as e:
+        if cursor: cursor.close()
+        if conn: conn.close()
+        return jsonify({"error": str(e)}), 500
+
+# --- MARK BUYER CONTACTED ---
 @app.route('/api/mark-contacted', methods=['POST'])
 def mark_contacted():
     if not session.get('logged_in'):
@@ -158,29 +204,43 @@ def mark_contacted():
 
     return jsonify({"status": "success", "contacted_by": user_name}), 200
 
-# Endpoint to handle slip processing
+# --- PROCESS BUYER SLIPS ---
 @app.route('/process-buyer-slip', methods=['POST'])
 def process_buyer_slip():
     data = request.get_json() or {}
-    parsed_date, buyer = data.get('date'), data.get('buyer', '').strip()
-    producer, commodity = data.get('producer', '').strip(), data.get('commodity', '').strip()
-    pack, qty = data.get('pack', '').strip(), data.get('qty', 0)
-    price, total = data.get('price', 0.0), data.get('total', 0.0)
+    
+    parsed_date = data.get('date')
+    buyer = data.get('buyer', '').strip()
+    producer = data.get('producer', '').strip()
+    commodity = data.get('commodity', '').strip()
+    pack = data.get('pack', '').strip()
+    qty = data.get('qty', 0)
+    price = data.get('price', 0.0)
+    total = data.get('total', 0.0)
 
     if not buyer or not commodity:
-        return jsonify({"error": "Missing details"}), 400
+        return jsonify({"error": "Missing required details"}), 400
+
+    # Parse pack into separate attributes during insert
+    tokens = pack.split()
+    pack_weight = tokens[0] if len(tokens) > 0 else 'STD'
+    item_class = 'Class 1' if 'C1' in pack.upper() or 'CLASS 1' in pack.upper() else ('Class 2' if 'C2' in pack.upper() or 'CLASS 2' in pack.upper() else 'Class 1')
+    variety = ' '.join(tokens[2:]) if len(tokens) > 2 else 'Standard'
 
     conn = get_db_connection()
     cursor = conn.cursor()
+    
     query = """
-        INSERT INTO buyer_history (date, buyer, producer, commodity, pack, qty, price, total)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (buyer, commodity, pack, qty, price, total) DO NOTHING;
+        INSERT INTO buyer_history (date, buyer, producer, commodity, pack, pack_weight, item_class, variety, qty, price, total)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (buyer, commodity, pack, qty, price, total) 
+        DO NOTHING;
     """
-    cursor.execute(query, (parsed_date, buyer, producer, commodity, pack, qty, price, total))
+    cursor.execute(query, (parsed_date, buyer, producer, commodity, pack, pack_weight, item_class, variety, qty, price, total))
     conn.commit()
     cursor.close()
     conn.close()
+
     return jsonify({"status": "success"}), 200
 
 if __name__ == '__main__':
