@@ -104,8 +104,8 @@ def process_drive_folder(service, raw_folder_id, processed_folder_id, target_tab
 
             df.columns = [str(c).strip().lower() for c in df.columns]
 
-            # Clear existing records for this salesman before loading fresh state
-            cursor.execute(f"DELETE FROM {target_table} WHERE salesman = %s;", (salesman,))
+            # Clear existing records for this salesman safely
+            cursor.execute(f"DELETE FROM {target_table} WHERE salesman = %s;", [salesman])
 
             for idx, row in df.iterrows():
                 seq_val = int(idx + 1)
@@ -125,11 +125,12 @@ def process_drive_folder(service, raw_folder_id, processed_folder_id, target_tab
                         try: qty_val = int(row[col])
                         except: qty_val = 0
 
-                cursor.execute(f"""
+                insert_query = f"""
                     INSERT INTO {target_table} 
                     (seq_nr, salesman, producer, commodity, variety, size, pack, qty, intake_date)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_DATE);
-                """, (seq_val, salesman, farmer_val, comm_val, var_val, size_val, pack_val, qty_val))
+                """
+                cursor.execute(insert_query, (int(seq_val), str(salesman), str(farmer_val), str(comm_val), str(var_val), str(size_val), str(pack_val), int(qty_val)))
                 
                 inserted_count += 1
 
@@ -368,7 +369,7 @@ def log_contact():
         cursor.execute("""
             INSERT INTO buyer_contact_log (buyer, contacted_by, contacted_at)
             VALUES (%s, %s, NOW());
-        """, (buyer, contacted_by))
+        """, [buyer, contacted_by])
         conn.commit()
         cursor.close()
         conn.close()
