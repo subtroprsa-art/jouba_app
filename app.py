@@ -133,7 +133,7 @@ def process_drive_folder(service, raw_folder_id, processed_folder_id, target_tab
 
     cursor.close()
     conn.close()
-    return total_inserted
+    return int(total_inserted)
 
 def run_auto_sync_job():
     """Background task running every 3 minutes"""
@@ -214,8 +214,8 @@ def sync_drive():
             "success": True,
             "message": "Google Drive sync completed successfully!",
             "imported": {
-                "floor_records": floor_count,
-                "stock_records": stock_count
+                "floor_records": int(floor_count),
+                "stock_records": int(stock_count)
             }
         }), 200
     except Exception as e:
