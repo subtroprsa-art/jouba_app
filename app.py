@@ -47,7 +47,7 @@ def get_drive_service():
     return build('drive', 'v3', credentials=creds)
 
 def parse_salesman(filename):
-    name = filename.lower()
+    name = str(filename).lower()
     if name.startswith("cdw"):
         return "Christoff"
     elif name.startswith("riaa") or name.startswith("riaan"):
@@ -139,14 +139,14 @@ def run_auto_sync_job():
     """Background task running every 3 minutes"""
     try:
         service = get_drive_service()
-        floor_count = process_drive_folder(service, FOLDERS["floor_raw"], FOLDERS["floor_processed"], "floor_records")
-        stock_count = process_drive_folder(service, FOLDERS["stock_raw"], FOLDERS["stock_processed"], "stock_records")
+        floor_count = int(process_drive_folder(service, FOLDERS["floor_raw"], FOLDERS["floor_processed"], "floor_records"))
+        stock_count = int(process_drive_folder(service, FOLDERS["stock_raw"], FOLDERS["stock_processed"], "stock_records"))
         if floor_count > 0 or stock_count > 0:
             print(f"⚡ Auto-Sync Complete: Imported {floor_count} floor records & {stock_count} stock records.")
     except Exception as e:
         print(f"❌ Auto-Sync Background Job Error: {str(e)}")
 
-# Initialize and start background scheduler (checks Drive every 3 minutes)
+# Initialize and start background scheduler
 scheduler = BackgroundScheduler(daemon=True)
 scheduler.add_job(run_auto_sync_job, 'interval', minutes=3)
 scheduler.start()
@@ -208,14 +208,14 @@ def sync_drive():
 
     try:
         service = get_drive_service()
-        floor_count = process_drive_folder(service, FOLDERS["floor_raw"], FOLDERS["floor_processed"], "floor_records")
-        stock_count = process_drive_folder(service, FOLDERS["stock_raw"], FOLDERS["stock_processed"], "stock_records")
+        floor_count = int(process_drive_folder(service, FOLDERS["floor_raw"], FOLDERS["floor_processed"], "floor_records"))
+        stock_count = int(process_drive_folder(service, FOLDERS["stock_raw"], FOLDERS["stock_processed"], "stock_records"))
         return jsonify({
             "success": True,
             "message": "Google Drive sync completed successfully!",
             "imported": {
-                "floor_records": int(floor_count),
-                "stock_records": int(stock_count)
+                "floor_records": floor_count,
+                "stock_records": stock_count
             }
         }), 200
     except Exception as e:
