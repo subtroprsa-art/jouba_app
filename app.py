@@ -121,15 +121,14 @@ def get_inventory(inventory_type):
     if not session.get("user"):
         return jsonify({"error": "Unauthorized"}), 401
 
-    # Map to actual DB tables
     table = "stock_records" if inventory_type == "stock" else "floor_records"
     
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # Query the live data tables and ALIAS columns to match your HTML expectations
         if inventory_type == "stock":
+            # FIX: date_received is integer (YYYYMMDD). Convert to date using TO_DATE.
             query = f"""
                 SELECT 
                     salesman, 
@@ -139,12 +138,13 @@ def get_inventory(inventory_type):
                     size, 
                     pack AS pack_weight, 
                     qty_floor AS qty,
-                    EXTRACT(DAY FROM (CURRENT_DATE - date_received)) AS age_days
+                    EXTRACT(DAY FROM (CURRENT_DATE - TO_DATE(date_received::text, 'YYYYMMDD'))) AS age_days
                 FROM {table}
                 WHERE qty_floor > 0
                 ORDER BY salesman, date_received DESC
             """
         else: # floor_records
+            # FIX: dn_date is integer (YYYYMMDD). Convert to date using TO_DATE.
             query = f"""
                 SELECT 
                     salesman, 
@@ -153,7 +153,7 @@ def get_inventory(inventory_type):
                     variety, 
                     container AS pack_weight, 
                     qty AS qty,
-                    EXTRACT(DAY FROM (CURRENT_DATE - dn_date)) AS age_days
+                    EXTRACT(DAY FROM (CURRENT_DATE - TO_DATE(dn_date::text, 'YYYYMMDD'))) AS age_days
                 FROM {table}
                 WHERE qty > 0
                 ORDER BY salesman, dn_date DESC
@@ -406,7 +406,6 @@ def sync_drive():
                 def col_index(name):
                     return headers.index(name) if name in headers else None
 
-                # Determine column indexes for floor vs stock files
                 if folder_name == "floor_raw":
                     qty_idx = col_index("qty")
                     pack_idx = col_index("container")
@@ -452,7 +451,6 @@ def sync_drive():
     }), 200
 
 
-# Helper function for parsing salesman from filename
 def parse_salesman(filename: str) -> str:
     name = filename.lower()
     if name.startswith("cdw"):
