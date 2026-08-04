@@ -104,7 +104,7 @@ def process_drive_folder(service, raw_folder_id, processed_folder_id, target_tab
 
             df.columns = [str(c).strip().lower() for c in df.columns]
 
-            # Clear existing records for this salesman safely using a strict 1-tuple
+            # Clear existing records for this salesman safely
             cursor.execute(f"DELETE FROM {target_table} WHERE salesman = %s;", (salesman,))
 
             for idx, row in df.iterrows():
@@ -132,14 +132,14 @@ def process_drive_folder(service, raw_folder_id, processed_folder_id, target_tab
                 """
                 cursor.execute(insert_query, (int(seq_val), str(salesman), str(farmer_val), str(comm_val), str(var_val), str(size_val), str(pack_val), int(qty_val)))
                 
-                inserted_count += 1
+                inserted_count = int(inserted_count) + 1
 
             conn.commit()
             move_drive_file(service, file_id, processed_folder_id)
 
         cursor.close()
         conn.close()
-        return inserted_count
+        return int(inserted_count)
     except Exception as e:
         print(f"❌ Error in process_drive_folder ({target_table}): {str(e)}")
         raise e
