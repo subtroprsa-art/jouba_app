@@ -3,21 +3,31 @@ import io
 import json
 import logging
 import csv
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template, redirect, url_for, session
+
+# Google API imports
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
 app = Flask(__name__)
+app.secret_key = os.getenv("FLASK_SECRET_KEY", "jdw_super_secret_login_key_2026")  # Needed for sessions
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Authentication token
+# Authentication token for API calls
 AUTH_TOKEN = os.getenv("SYNC_TOKEN", "jdw_sync_secret_token_2026")
 
 # Target Raw Folder IDs
 FOLDER_FLOOR_BALANCE = os.getenv("GOOGLE_DRIVE_FOLDER_ID_FLOOR", "1akYejLRp-bOvdjJEat4Z1XC1frru9j_Y")
 FOLDER_STOCK_SCAN = os.getenv("GOOGLE_DRIVE_FOLDER_ID_STOCK", "1DrYmim6xThu6KfKRplr5SDBVZc-BFMBm")
+
+# Hardcoded users (you can move these to env variables later)
+USERS = {
+    "riaan": "password123",
+    "christoff": "password123"
+}
 
 
 def get_drive_service():
@@ -49,14 +59,77 @@ def parse_salesman(filename: str) -> str:
     return "Unassigned"
 
 
+# ===================== HTML ROUTES =====================
+
 @app.route("/", methods=["GET"])
+def login_page():
+    """Serves the login page."""
+    if session.get("user"):
+        return redirect(url_for("dashboard_page"))
+    return render_template("login.html", error=None)
+
+
+@app.route("/", methods=["POST"])
+def login_action():
+    """Handles login form submission."""
+    username = request.form.get("username")
+    password = request.form.get("password")
+
+    if username in USERS and USERS[username] == password:
+        session["user"] = username
+        # Map username to full display name
+        session["user_name"] = "Riaan Joubert" if username == "riaan" else "Christoff de Wet"
+        return redirect(url_for("dashboard_page"))
+    else:
+        return render_template("login.html", error="Invalid username or password")
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login_page"))
+
+
+@app.route("/dashboard")
+def dashboard_page():
+    if not session.get("user"):
+        return redirect(url_for("login_page"))
+    return render_template("dashboard.html", user_name=session.get("user_name"))
+
+
+@app.route("/stock")
+def stock_page():
+    if not session.get("user"):
+        return redirect(url_for("login_page"))
+    return render_template("stock.html", user_name=session.get("user_name"))
+
+
+@app.route("/floor-balance")
+def floor_balance_page():
+    if not session.get("user"):
+        return redirect(url_for("login_page"))
+    return render_template("floor_balance.html", user_name=session.get("user_name"))
+
+
+@app.route("/pipeline")
+def pipeline_page():
+    if not session.get("user"):
+        return redirect(url_for("login_page"))
+    return render_template("pipeline.html", user_name=session.get("user_name"))
+
+
+@app.route("/inventory")
+def inventory_page():
+    if not session.get("user"):
+        return redirect(url_for("login_page"))
+    return render_template("inventory.html", user_name=session.get("user_name"))
+
+
+# ===================== API ROUTES (KEPT INTACT) =====================
+
+@app.route("/api/health", methods=["GET"])
 def health_check():
     return jsonify({"success": True, "status": "healthy", "service": "jdw-sync"}), 200
-
-
-@app.route("/dashboard", methods=["GET"])
-def dashboard():
-    return jsonify({"success": True, "message": "Welcome to the JDW Sync Dashboard"}), 200
 
 
 @app.route("/api/upload-inventory", methods=["POST"])
@@ -188,8 +261,6 @@ def sync_drive():
                     return headers.index(name) if name in headers else None
 
                 # Different file layouts per folder, so map columns explicitly
-                # instead of doing a fuzzy "qty"/"pack" substring match, which
-                # was matching multiple QTY_* columns and no PACK column at all.
                 if folder_name == "floor_raw":
                     qty_idx = col_index("qty")
                     pack_idx = col_index("container")
@@ -212,8 +283,7 @@ def sync_drive():
                     if pack_idx is not None:
                         pack = get_val(row, pack_idx)
                     else:
-                        # stock_raw: pack code is the 2nd comma-separated
-                        # field inside COMMODITY, e.g. "AVOS,BG150,AH,2,M,*,*"
+                        # stock_raw: pack code is the 2nd comma-separated field inside COMMODITY
                         commodity_val = get_val(row, commodity_idx)
                         parts = commodity_val.split(",")
                         pack = parts[1].strip() if len(parts) > 1 else ""
