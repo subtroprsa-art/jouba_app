@@ -75,7 +75,6 @@ def process_folder(service, raw_folder_id, processed_folder_id, target_table):
             _, done = downloader.next_chunk()
         fh.seek(0)
 
-        # Handle tab-delimited or comma-delimited CSVs
         if file_name.lower().endswith(('.csv', '.txt')):
             try:
                 df = pd.read_csv(fh, sep='\t')
@@ -100,7 +99,6 @@ def process_folder(service, raw_folder_id, processed_folder_id, target_table):
             grn_val = str(row.get('GRN_NO', '')).strip() if pd.notna(row.get('GRN_NO')) else ''
             producer_val = str(row.get('PRODUCER', '')).strip() if pd.notna(row.get('PRODUCER')) else ''
 
-            # Parse composite COMMODITY string ("AVOS,BG150,AH,2,M,*,*")
             comm_raw = str(row.get('COMMODITY', '')) if pd.notna(row.get('COMMODITY')) else ''
             comm_parts = [p.strip() for p in comm_raw.split(',')] if comm_raw else []
 
@@ -111,7 +109,6 @@ def process_folder(service, raw_folder_id, processed_folder_id, target_table):
             size      = comm_parts[4] if len(comm_parts) > 4 else str(row.get('SIZE', '*'))
             count     = comm_parts[5] if len(comm_parts) > 5 else str(row.get('COUNT', '*'))
 
-            # Parse quantities cleanly
             def parse_int(val):
                 try:
                     return int(float(val)) if pd.notna(val) and str(val).strip() != '' else 0
@@ -121,8 +118,6 @@ def process_folder(service, raw_folder_id, processed_folder_id, target_table):
             qty_rec   = parse_int(row.get('QTY_REC', 0))
             qty_sold  = parse_int(row.get('QTY_SOLD', 0))
             qty_floor = parse_int(row.get('QTY_FLOOR', 0))
-            
-            # Default single qty for floor_records table fallback
             qty = qty_floor if qty_floor > 0 else (qty_rec - qty_sold)
 
             records.append((
@@ -137,7 +132,6 @@ def process_folder(service, raw_folder_id, processed_folder_id, target_table):
                 (seq_nr, salesman, grn, producer, commodity, pack, variety, grade, size, count, qty, qty_rec, qty_sold, qty_floor, intake_date)
                 VALUES %s;
             """
-            # Append CURRENT_DATE to each record row
             records_with_date = [r + (pd.Timestamp.now().date(),) for r in records]
             execute_values(cursor, insert_query, records_with_date)
 

@@ -6,6 +6,7 @@ import csv
 from flask import Flask, request, jsonify, render_template, redirect, url_for, session
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from datetime import datetime, date
 
 # Google API imports
 from google.oauth2 import service_account
@@ -127,41 +128,23 @@ def get_inventory(inventory_type):
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # Fetch ALL columns needed. We will handle grouping in Python
         query = f"""
             SELECT *
             FROM {table}
             WHERE qty_floor > 0 OR qty > 0
             ORDER BY date_received DESC
         """
-        
-        # Note: I removed the specific column selection and used SELECT * 
-        # so we don't miss any columns that might be named differently.
-
         cursor.execute(query)
         rows = cursor.fetchall()
         cursor.close()
         conn.close()
 
-        # Process in Python
-        from datetime import datetime, date
         inventory = {}
         today = date.today()
 
         for row in rows:
-            # --- 1. DETERMINE SALESMAN (Fix blank salesman issue) ---
+            # 1. Map salesman
             raw_salesman = row.get('salesman')
-            
-            # If database has no salesman, try to parse from the filename (if available)
-            if not raw_salesman or raw_salesman == '':
-                file_name = row.get('file_name', '') # assuming you inserted a file_name column
-                if file_name:
-                    raw_salesman = parse_salesman(file_name)
-                else:
-                    # If all else fails, default based on table type
-                    raw_salesman = "Christoff" if inventory_type == "stock" else "Unassigned"
-
-            # Map full names to short names
             if raw_salesman == "DE WET, CHRISTOFF REINHARDT":
                 sm = "Christoff"
             elif raw_salesman == "JOUBERT, RIAAN":
@@ -169,46 +152,39 @@ def get_inventory(inventory_type):
             elif raw_salesman == "POTGIETER":
                 sm = "Pot"
             else:
-                sm = raw_salesman  # Keep as is (e.g., "Christoff", "Riaan", etc.)
+                sm = raw_salesman
 
-            # Initialize group if not exists
             if sm not in inventory:
                 inventory[sm] = []
 
-            # --- 2. DETERMINE FARMER NAME (Fix 'undefined' issue) ---
-            # Try possible column names used in your different CSV/DB setups
-            farmer_name = row.get('producer') or row.get('prod') or row.get('farmer_name') or row.get('PRODUCER')
-            if not farmer_name:
-                farmer_name = "Unknown Producer"
+            # 2. Determine Farmer Name
+            farmer_name = row.get('producer') or row.get('prod') or row.get('farmer_name') or "Unknown Producer"
 
-            # --- 3. DETERMINE QTY ---
-            qty = row.get('qty_floor') or row.get('qty') or row.get('QTY') or 0
+            # 3. Determine Qty
+            qty = row.get('qty_floor') or row.get('qty') or 0
             if qty == 0:
-                continue # Skip rows with zero quantity
+                continue
 
-            # --- 4. DETERMINE PACK WEIGHT ---
-            pack = row.get('pack') or row.get('container') or row.get('PACK') or ""
+            # 4. Determine Pack
+            pack = row.get('pack') or row.get('container') or ""
 
-            # --- 5. DETERMINE DATE & AGE ---
-            raw_date = row.get('date_received') or row.get('dn_date') or row.get('DATE_RECEIVED')
+            # 5. Parse Date safely
+            raw_date = row.get('date_received') or row.get('dn_date')
             age_days = 0
             if raw_date:
                 try:
                     d_str = str(raw_date).strip()
-                    # Try YYYYMMDD
                     if d_str.isdigit() and len(d_str) == 8:
                         dt = datetime.strptime(d_str, '%Y%m%d').date()
-                    # Try YYYY-MM-DD
                     elif '-' in d_str and d_str.replace('-', '').isdigit():
                         dt = datetime.strptime(d_str, '%Y-%m-%d').date()
-                    # Try DD-MON-YY
                     else:
                         dt = datetime.strptime(d_str, '%d-%b-%y').date()
                     age_days = (today - dt).days
                 except Exception:
                     age_days = 0
 
-            # --- 6. BUILD THE ITEM ---
+            # 6. Build Item
             item = {
                 "salesman": sm,
                 "farmer_name": farmer_name,
@@ -219,7 +195,6 @@ def get_inventory(inventory_type):
                 "qty": int(qty) if qty else 0,
                 "age_days": age_days
             }
-
             inventory[sm].append(item)
 
         return jsonify({"inventory": inventory}), 200
@@ -238,7 +213,6 @@ def get_sales_pipeline():
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # Get top buyers and their phones
         cursor.execute("""
             SELECT 
                 bh.buyer AS buyer, 
@@ -253,7 +227,6 @@ def get_sales_pipeline():
         """)
         buyers = cursor.fetchall()
 
-        # Get distinct commodities currently on floor/stock
         cursor.execute("""
             SELECT DISTINCT commodity FROM stock_records WHERE qty_floor > 0
             UNION
