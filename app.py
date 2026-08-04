@@ -70,74 +70,78 @@ def move_drive_file(service, file_id, target_folder_id):
         print(f"Warning moving file {file_id}: {str(e)}")
 
 def process_drive_folder(service, raw_folder_id, processed_folder_id, target_table):
-    query = f"'{raw_folder_id}' in parents and trashed = false"
-    results = service.files().list(q=query, fields="files(id, name)").execute()
-    files = results.get('files', [])
+    try:
+        query = f"'{raw_folder_id}' in parents and trashed = false"
+        results = service.files().list(q=query, fields="files(id, name)").execute()
+        files = results.get('files', [])
 
-    if not files:
-        return 0
+        if not files:
+            return 0
 
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    inserted_count = 0
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        inserted_count = 0
 
-    for file_item in files:
-        file_id = file_item['id']
-        file_name = file_item['name']
-        salesman = parse_salesman(file_name)
+        for file_item in files:
+            file_id = file_item['id']
+            file_name = file_item['name']
+            salesman = parse_salesman(file_name)
 
-        request_media = service.files().get_media(fileId=file_id)
-        fh = io.BytesIO()
-        downloader = MediaIoBaseDownload(fh, request_media)
-        done = False
-        while not done:
-            _, done = downloader.next_chunk()
-        fh.seek(0)
+            request_media = service.files().get_media(fileId=file_id)
+            fh = io.BytesIO()
+            downloader = MediaIoBaseDownload(fh, request_media)
+            done = False
+            while not done:
+                _, done = downloader.next_chunk()
+            fh.seek(0)
 
-        if file_name.lower().endswith('.csv'):
-            df = pd.read_csv(fh)
-        elif file_name.lower().endswith(('.xls', '.xlsx')):
-            df = pd.read_excel(fh)
-        else:
-            continue
+            if file_name.lower().endswith('.csv'):
+                df = pd.read_csv(fh)
+            elif file_name.lower().endswith(('.xls', '.xlsx')):
+                df = pd.read_excel(fh)
+            else:
+                continue
 
-        df.columns = [str(c).strip().lower() for c in df.columns]
+            df.columns = [str(c).strip().lower() for c in df.columns]
 
-        # Clear existing records for this salesman before loading fresh state
-        cursor.execute(f"DELETE FROM {target_table} WHERE salesman = %s;", (salesman,))
+            # Clear existing records for this salesman before loading fresh state
+            cursor.execute(f"DELETE FROM {target_table} WHERE salesman = %s;", (salesman,))
 
-        for idx, row in df.iterrows():
-            seq_val = int(idx + 1)
-            farmer_val, comm_val, var_val, size_val, pack_val, qty_val = "", "", "", "", "", 0
+            for idx, row in df.iterrows():
+                seq_val = int(idx + 1)
+                farmer_val, comm_val, var_val, size_val, pack_val, qty_val = "", "", "", "", "", 0
 
-            for col in df.columns:
-                val = str(row[col]).strip() if pd.notna(row[col]) else ""
-                if "seq" in col:
-                    try: seq_val = int(row[col])
-                    except: pass
-                if "producer" in col or "farmer" in col: farmer_val = val
-                if "commodity" in col: comm_val = val
-                if "variety" in col: var_val = val
-                if "size" in col: size_val = val
-                if "pack" in col: pack_val = val
-                if "qty" in col or "quantity" in col:
-                    try: qty_val = int(row[col])
-                    except: qty_val = 0
+                for col in df.columns:
+                    val = str(row[col]).strip() if pd.notna(row[col]) else ""
+                    if "seq" in col:
+                        try: seq_val = int(row[col])
+                        except: pass
+                    if "producer" in col or "farmer" in col: farmer_val = val
+                    if "commodity" in col: comm_val = val
+                    if "variety" in col: var_val = val
+                    if "size" in col: size_val = val
+                    if "pack" in col: pack_val = val
+                    if "qty" in col or "quantity" in col:
+                        try: qty_val = int(row[col])
+                        except: qty_val = 0
 
-            cursor.execute(f"""
-                INSERT INTO {target_table} 
-                (seq_nr, salesman, producer, commodity, variety, size, pack, qty, intake_date)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_DATE);
-            """, (seq_val, salesman, farmer_val, comm_val, var_val, size_val, pack_val, qty_val))
-            
-            inserted_count += 1
+                cursor.execute(f"""
+                    INSERT INTO {target_table} 
+                    (seq_nr, salesman, producer, commodity, variety, size, pack, qty, intake_date)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_DATE);
+                """, (seq_val, salesman, farmer_val, comm_val, var_val, size_val, pack_val, qty_val))
+                
+                inserted_count += 1
 
-        conn.commit()
-        move_drive_file(service, file_id, processed_folder_id)
+            conn.commit()
+            move_drive_file(service, file_id, processed_folder_id)
 
-    cursor.close()
-    conn.close()
-    return int(inserted_count)
+        cursor.close()
+        conn.close()
+        return int(inserted_count)
+    except Exception as e:
+        print(f"❌ Error in process_drive_folder ({target_table}): {str(e)}")
+        raise e
 
 def run_auto_sync_job():
     """Background task running every 3 minutes"""
