@@ -222,3 +222,41 @@ def log_contact():
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port, debug=True)
+
+# --- SYSTEM DIAGNOSTIC / HEALTH CHECK API ---
+@app.route('/api/health-check', methods=['GET'])
+def health_check():
+    if not session.get('logged_in'):
+        return jsonify({"error": "Unauthorized"}), 401
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    diagnostics = {}
+    
+    try:
+        # Check stock_records breakdown
+        cursor.execute("""
+            SELECT COALESCE(salesman, 'UNASSIGNED') AS salesman, COUNT(*) AS count 
+            FROM stock_records GROUP BY salesman;
+        """)
+        diagnostics['stock_records_summary'] = cursor.fetchall()
+
+        # Check floor_records breakdown
+        cursor.execute("""
+            SELECT COALESCE(salesman, 'UNASSIGNED') AS salesman, COUNT(*) AS count 
+            FROM floor_records GROUP BY salesman;
+        """)
+        diagnostics['floor_records_summary'] = cursor.fetchall()
+
+        # Fetch 3 sample stock rows to inspect column values
+        cursor.execute("SELECT * FROM stock_records LIMIT 3;")
+        diagnostics['stock_sample_rows'] = cursor.fetchall()
+
+        cursor.close()
+        conn.close()
+        return jsonify({"status": "OK", "data": diagnostics}), 200
+    except Exception as e:
+        if cursor: cursor.close()
+        if conn: conn.close()
+        return jsonify({"status": "ERROR", "error": str(e)}), 500
