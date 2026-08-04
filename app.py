@@ -57,14 +57,17 @@ def parse_salesman(filename):
     return "Unassigned"
 
 def move_drive_file(service, file_id, target_folder_id):
-    file = service.files().get(file_id=file_id, fields='parents').execute()
-    previous_parents = ",".join(file.get('parents', []))
-    service.files().update(
-        fileId=file_id,
-        addParents=target_folder_id,
-        removeParents=previous_parents,
-        fields='id, parents'
-    ).execute()
+    try:
+        file = service.files().get(file_id=file_id, fields='parents').execute()
+        previous_parents = ",".join(file.get('parents', []))
+        service.files().update(
+            fileId=file_id,
+            addParents=target_folder_id,
+            removeParents=previous_parents,
+            fields='id, parents'
+        ).execute()
+    except Exception as e:
+        print(f"Warning moving file {file_id}: {str(e)}")
 
 def process_drive_folder(service, raw_folder_id, processed_folder_id, target_table):
     query = f"'{raw_folder_id}' in parents and trashed = false"
@@ -104,7 +107,7 @@ def process_drive_folder(service, raw_folder_id, processed_folder_id, target_tab
         cursor.execute(f"DELETE FROM {target_table} WHERE salesman = %s;", (salesman,))
 
         for idx, row in df.iterrows():
-            seq_val = idx + 1
+            seq_val = int(idx + 1)
             farmer_val, comm_val, var_val, size_val, pack_val, qty_val = "", "", "", "", "", 0
 
             for col in df.columns:
@@ -139,8 +142,8 @@ def run_auto_sync_job():
     """Background task running every 3 minutes"""
     try:
         service = get_drive_service()
-        floor_count = int(process_drive_folder(service, FOLDERS["floor_raw"], FOLDERS["floor_processed"], "floor_records"))
-        stock_count = int(process_drive_folder(service, FOLDERS["stock_raw"], FOLDERS["stock_processed"], "stock_records"))
+        floor_count = process_drive_folder(service, FOLDERS["floor_raw"], FOLDERS["floor_processed"], "floor_records")
+        stock_count = process_drive_folder(service, FOLDERS["stock_raw"], FOLDERS["stock_processed"], "stock_records")
         if floor_count > 0 or stock_count > 0:
             print(f"⚡ Auto-Sync Complete: Imported {floor_count} floor records & {stock_count} stock records.")
     except Exception as e:
@@ -208,14 +211,14 @@ def sync_drive():
 
     try:
         service = get_drive_service()
-        floor_count = int(process_drive_folder(service, FOLDERS["floor_raw"], FOLDERS["floor_processed"], "floor_records"))
-        stock_count = int(process_drive_folder(service, FOLDERS["stock_raw"], FOLDERS["stock_processed"], "stock_records"))
+        floor_count = process_drive_folder(service, FOLDERS["floor_raw"], FOLDERS["floor_processed"], "floor_records")
+        stock_count = process_drive_folder(service, FOLDERS["stock_raw"], FOLDERS["stock_processed"], "stock_records")
         return jsonify({
             "success": True,
             "message": "Google Drive sync completed successfully!",
             "imported": {
-                "floor_records": floor_count,
-                "stock_records": stock_count
+                "floor_records": int(floor_count),
+                "stock_records": int(stock_count)
             }
         }), 200
     except Exception as e:
