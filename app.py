@@ -8,8 +8,8 @@ from flask import Flask, render_template, request, jsonify, redirect, url_for, s
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
+from apscheduler.schedulers.background import BackgroundScheduler
 
-# Initialize Flask app at top-level for Gunicorn
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "jdw_fresh_secret_key_2026")
 
@@ -18,7 +18,6 @@ DATABASE_URL = os.environ.get(
     "postgresql://neondb_owner:npg_1p3mIsQvTzeF@ep-hidden-rain-a8gq43w7.eastus2.azure.neon.tech/neondb?sslmode=require"
 )
 
-# Secret token for external API authentication
 APP_SYNC_TOKEN = os.environ.get("APP_SYNC_TOKEN", "jdw_sync_secret_token_2026")
 
 # Google Drive Folder IDs
@@ -37,9 +36,6 @@ def get_db_connection():
 
 def get_current_user():
     return session.get('username', 'Sales Team')
-
-
-# --- GOOGLE DRIVE DIRECT SYNC LOGIC ---
 
 def get_drive_service():
     creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON")
@@ -104,7 +100,7 @@ def process_drive_folder(service, raw_folder_id, processed_folder_id, target_tab
 
         df.columns = [str(c).strip().lower() for c in df.columns]
 
-        # Clear existing records for this salesman
+        # Clear existing records for this salesman before loading fresh state
         cursor.execute(f"DELETE FROM {target_table} WHERE salesman = %s;", (salesman,))
 
         for idx, row in df.iterrows():
@@ -139,8 +135,24 @@ def process_drive_folder(service, raw_folder_id, processed_folder_id, target_tab
     conn.close()
     return total_inserted
 
+def run_auto_sync_job():
+    """Background task running every 3 minutes"""
+    try:
+        service = get_drive_service()
+        floor_count = process_drive_folder(service, FOLDERS["floor_raw"], FOLDERS["floor_processed"], "floor_records")
+        stock_count = process_drive_folder(service, FOLDERS["stock_raw"], FOLDERS["stock_processed"], "stock_records")
+        if floor_count > 0 or stock_count > 0:
+            print(f"⚡ Auto-Sync Complete: Imported {floor_count} floor records & {stock_count} stock records.")
+    except Exception as e:
+        print(f"❌ Auto-Sync Background Job Error: {str(e)}")
 
-# --- AUTHENTICATION ROUTES ---
+# Initialize background scheduler (checks Drive every 3 minutes)
+scheduler = BackgroundScheduler(daemon=True)
+scheduler.add_job(run_auto_sync_job, 'interval', minutes=3)
+scheduler.start()
+
+
+# --- ROUTES ---
 
 @app.route('/')
 def home():
@@ -167,9 +179,6 @@ def logout():
     session.clear()
     return redirect(url_for('login'))
 
-
-# --- PAGE VIEWS ---
-
 @app.route('/dashboard')
 def dashboard():
     if not session.get('logged_in'):
@@ -191,29 +200,6 @@ def floor_balance_page():
 
 # --- API ENDPOINTS ---
 
-@app.route('/api/sync-drive', methods=['POST', 'GET'])
-def trigger_drive_sync():
-    """Endpoint to trigger quota-free direct Google Drive processing"""
-    if request.method == 'POST' and not session.get('logged_in'):
-        # Allow system/cron invocation via token parameter or logged-in session
-        token = request.args.get('token') or (request.json or {}).get('token')
-        if token != APP_SYNC_TOKEN:
-            return jsonify({"error": "Unauthorized"}), 401
-
-    try:
-        service = get_drive_service()
-        floor_count = process_drive_folder(service, FOLDERS["floor_raw"], FOLDERS["floor_processed"], "floor_records")
-        stock_count = process_drive_folder(service, FOLDERS["stock_raw"], FOLDERS["stock_processed"], "stock_records")
-        
-        return jsonify({
-            "success": True, 
-            "message": "Google Drive sync completed successfully!",
-            "imported": {"floor_records": floor_count, "stock_records": stock_count}
-        }), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
 @app.route('/api/sales-pipeline', methods=['GET'])
 def get_sales_pipeline():
     if not session.get('logged_in'):
@@ -221,7 +207,6 @@ def get_sales_pipeline():
 
     conn = get_db_connection()
     cursor = conn.cursor()
-    
     query = """
         WITH available_stock AS (
             SELECT DISTINCT UPPER(TRIM(commodity)) AS commodity_clean
@@ -336,55 +321,6 @@ def get_inventory_data(inv_type):
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/upload-inventory', methods=['POST'])
-def upload_inventory():
-    data = request.json or {}
-    
-    if data.get('token') != APP_SYNC_TOKEN:
-        return jsonify({"error": "Unauthorized"}), 401
-
-    target_table = data.get('target_table')
-    salesman = data.get('salesman', 'Unassigned')
-    records = data.get('records', [])
-
-    if target_table not in ['stock_records', 'floor_records']:
-        return jsonify({"error": "Invalid target table"}), 400
-
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    try:
-        cursor.execute(f"DELETE FROM {target_table} WHERE salesman = %s;", (salesman,))
-
-        inserted_count = 0
-        for r in records:
-            cursor.execute(f"""
-                INSERT INTO {target_table} 
-                (seq_nr, salesman, producer, commodity, variety, size, pack, qty, intake_date)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_DATE);
-            """, (
-                r.get('seq_nr', 0),
-                salesman,
-                r.get('farmer', ''),
-                r.get('commodity', ''),
-                r.get('variety', ''),
-                r.get('size', ''),
-                r.get('pack', ''),
-                r.get('qty', 0)
-            ))
-            inserted_count += 1
-
-        conn.commit()
-        cursor.close()
-        conn.close()
-        return jsonify({"success": True, "inserted": inserted_count}), 200
-
-    except Exception as e:
-        if cursor: cursor.close()
-        if conn: conn.close()
-        return jsonify({"error": str(e)}), 500
-
-
 @app.route('/api/log-contact', methods=['POST'])
 def log_contact():
     if not session.get('logged_in'):
@@ -412,38 +348,6 @@ def log_contact():
         if cursor: cursor.close()
         if conn: conn.close()
         return jsonify({"error": str(e)}), 500
-
-
-@app.route('/api/health-check', methods=['GET'])
-def health_check():
-    if not session.get('logged_in'):
-        return jsonify({"error": "Unauthorized"}), 401
-
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    diagnostics = {}
-    
-    try:
-        cursor.execute("""
-            SELECT COALESCE(salesman, 'UNASSIGNED') AS salesman, COUNT(*) AS count 
-            FROM stock_records GROUP BY salesman;
-        """)
-        diagnostics['stock_records_summary'] = cursor.fetchall()
-
-        cursor.execute("""
-            SELECT COALESCE(salesman, 'UNASSIGNED') AS salesman, COUNT(*) AS count 
-            FROM floor_records GROUP BY salesman;
-        """)
-        diagnostics['floor_records_summary'] = cursor.fetchall()
-
-        cursor.close()
-        conn.close()
-        return jsonify({"status": "OK", "data": diagnostics}), 200
-    except Exception as e:
-        if cursor: cursor.close()
-        if conn: conn.close()
-        return jsonify({"status": "ERROR", "error": str(e)}), 500
 
 
 if __name__ == '__main__':
