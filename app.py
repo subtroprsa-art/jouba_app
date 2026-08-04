@@ -127,52 +127,32 @@ def get_inventory(inventory_type):
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # Helper mapping to clean up the full Salesman names
-        salesman_map = {
-            "DE WET, CHRISTOFF REINHARDT": "Christoff",
-            "JOUBERT, RIAAN": "Riaan",
-            "POTGIETER": "Pot"
-        }
-
+        # Drop the complex CASE mapping into SQL directly for speed
         if inventory_type == "stock":
-            # FIX 1: Alias producer to farmer_name
-            # FIX 2: Parse 28-JUL-26 correctly
-            # FIX 3: Map salesman names
             query = f"""
                 SELECT 
-                    CASE 
-                        WHEN salesman = 'DE WET, CHRISTOFF REINHARDT' THEN 'Christoff'
-                        WHEN salesman = 'JOUBERT, RIAAN' THEN 'Riaan'
-                        WHEN salesman = 'POTGIETER' THEN 'Pot'
-                        ELSE salesman 
-                    END AS salesman,
+                    salesman, 
                     producer AS farmer_name, 
                     commodity, 
                     variety, 
                     size, 
                     pack AS pack_weight, 
                     qty_floor AS qty,
-                    (CURRENT_DATE - TO_DATE(date_received::text, 'DD-MON-YY')) AS age_days
+                    date_received
                 FROM {table}
                 WHERE qty_floor > 0
                 ORDER BY salesman, date_received DESC
             """
         else: # floor_records
-            # Floor CSV had same date format 'DD-MON-YY' in DN_DATE column
             query = f"""
                 SELECT 
-                    CASE 
-                        WHEN salesman = 'DE WET, CHRISTOFF REINHARDT' THEN 'Christoff'
-                        WHEN salesman = 'JOUBERT, RIAAN' THEN 'Riaan'
-                        WHEN salesman = 'POTGIETER' THEN 'Pot'
-                        ELSE salesman 
-                    END AS salesman,
+                    salesman, 
                     prod AS farmer_name, 
                     commodity, 
                     variety, 
                     container AS pack_weight, 
                     qty AS qty,
-                    (CURRENT_DATE - TO_DATE(dn_date::text, 'DD-MON-YY')) AS age_days
+                    dn_date AS date_received
                 FROM {table}
                 WHERE qty > 0
                 ORDER BY salesman, dn_date DESC
@@ -183,13 +163,57 @@ def get_inventory(inventory_type):
         cursor.close()
         conn.close()
 
-        # Group by salesman
+        # GROUP + PARSE IN PYTHON (No SQL crashes!)
+        from datetime import datetime, date
         inventory = {}
+        today = date.today()
+
         for row in rows:
-            sm = row['salesman']
+            # 1. Map salesman to proper short name
+            raw_salesman = row['salesman']
+            if raw_salesman == "DE WET, CHRISTOFF REINHARDT":
+                sm = "Christoff"
+            elif raw_salesman == "JOUBERT, RIAAN":
+                sm = "Riaan"
+            elif raw_salesman == "POTGIETER":
+                sm = "Pot"
+            else:
+                sm = raw_salesman
+
             if sm not in inventory:
                 inventory[sm] = []
-            inventory[sm].append(dict(row))
+
+            # 2. Parse the raw date safely
+            raw_date = row['date_received']
+            try:
+                # Try converting to string and parsing
+                d_str = str(raw_date).strip()
+                
+                # If it's like 20260803 (YYYYMMDD)
+                if d_str.isdigit() and len(d_str) == 8:
+                    dt = datetime.strptime(d_str, '%Y%m%d').date()
+                
+                # If it's like 2026-08-03 (Already standard date)
+                elif '-' in d_str and d_str.replace('-', '').isdigit():
+                    dt = datetime.strptime(d_str, '%Y-%m-%d').date()
+                
+                # If it's like 28-JUL-26 (Old text format)
+                else:
+                    dt = datetime.strptime(d_str, '%d-%b-%y').date()
+                
+                age_days = (today - dt).days
+            except Exception:
+                # If parsing completely fails, default to 0
+                age_days = 0
+
+            # 3. Build the final object
+            item = dict(row)
+            item['salesman'] = sm
+            item['age_days'] = age_days
+            # Remove raw date to keep JSON clean
+            item.pop('date_received', None)
+            
+            inventory[sm].append(item)
 
         return jsonify({"inventory": inventory}), 200
 
