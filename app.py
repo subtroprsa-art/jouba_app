@@ -7,7 +7,14 @@ from flask import Flask, render_template, request, jsonify, redirect, url_for, s
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "jdw_fresh_secret_key_2026")
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://neondb_owner:npg_1p3mIsQvTzeF@ep-hidden-rain-a8gq43w7.eastus2.azure.neon.tech/neondb?sslmode=require")
+DATABASE_URL = os.environ.get(
+    "DATABASE_URL", 
+    "postgresql://neondb_owner:npg_1p3mIsQvTzeF@ep-hidden-rain-a8gq43w7.eastus2.azure.neon.tech/neondb?sslmode=require"
+)
+
+# Secret token to authenticate Google Apps Script or external upload triggers
+APP_SYNC_TOKEN = os.environ.get("APP_SYNC_TOKEN", "jdw_sync_secret_token_2026")
+
 
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
@@ -138,7 +145,7 @@ def get_inventory_data(inv_type):
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    # Sort floor balance by seq_nr, stock by age
+    # Sort floor balance by seq_nr ASC, stock records by age DESC
     order_clause = "seq_nr ASC NULLS LAST, age_days DESC" if inv_type == "floor" else "salesman, age_days DESC"
 
     query = f"""
@@ -190,6 +197,59 @@ def get_inventory_data(inv_type):
         return jsonify({"error": str(e)}), 500
 
 
+# --- GOOGLE APPS SCRIPT / AUTOMATED UPLOAD ENDPOINT ---
+
+@app.route('/api/upload-inventory', methods=['POST'])
+def upload_inventory():
+    data = request.json or {}
+    
+    # Token check for secure API access
+    if data.get('token') != APP_SYNC_TOKEN:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    target_table = data.get('target_table') # 'stock_records' or 'floor_records'
+    salesman = data.get('salesman', 'Unassigned')
+    records = data.get('records', [])
+
+    if target_table not in ['stock_records', 'floor_records']:
+        return jsonify({"error": "Invalid target table"}), 400
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    try:
+        # Clear previous entries for this salesman to maintain clean inventory state
+        cursor.execute(f"DELETE FROM {target_table} WHERE salesman = %s;", (salesman,))
+
+        inserted_count = 0
+        for r in records:
+            cursor.execute(f"""
+                INSERT INTO {target_table} 
+                (seq_nr, salesman, producer, commodity, variety, size, pack, qty, intake_date)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_DATE);
+            """, (
+                r.get('seq_nr', 0),
+                salesman,
+                r.get('farmer', ''),
+                r.get('commodity', ''),
+                r.get('variety', ''),
+                r.get('size', ''),
+                r.get('pack', ''),
+                r.get('qty', 0)
+            ))
+            inserted_count += 1
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return jsonify({"success": True, "inserted": inserted_count}), 200
+
+    except Exception as e:
+        if cursor: cursor.close()
+        if conn: conn.close()
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route('/api/log-contact', methods=['POST'])
 def log_contact():
     if not session.get('logged_in'):
@@ -219,11 +279,8 @@ def log_contact():
         return jsonify({"error": str(e)}), 500
 
 
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port, debug=True)
+# --- SYSTEM HEALTH & DIAGNOSTIC ENDPOINT ---
 
-# --- SYSTEM DIAGNOSTIC / HEALTH CHECK API ---
 @app.route('/api/health-check', methods=['GET'])
 def health_check():
     if not session.get('logged_in'):
@@ -235,23 +292,17 @@ def health_check():
     diagnostics = {}
     
     try:
-        # Check stock_records breakdown
         cursor.execute("""
             SELECT COALESCE(salesman, 'UNASSIGNED') AS salesman, COUNT(*) AS count 
             FROM stock_records GROUP BY salesman;
         """)
         diagnostics['stock_records_summary'] = cursor.fetchall()
 
-        # Check floor_records breakdown
         cursor.execute("""
             SELECT COALESCE(salesman, 'UNASSIGNED') AS salesman, COUNT(*) AS count 
             FROM floor_records GROUP BY salesman;
         """)
         diagnostics['floor_records_summary'] = cursor.fetchall()
-
-        # Fetch 3 sample stock rows to inspect column values
-        cursor.execute("SELECT * FROM stock_records LIMIT 3;")
-        diagnostics['stock_sample_rows'] = cursor.fetchall()
 
         cursor.close()
         conn.close()
@@ -260,3 +311,8 @@ def health_check():
         if cursor: cursor.close()
         if conn: conn.close()
         return jsonify({"status": "ERROR", "error": str(e)}), 500
+
+
+if __name__ == '__main__':
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port, debug=True)
