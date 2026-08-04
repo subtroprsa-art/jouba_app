@@ -336,11 +336,9 @@ def handle_upload(table_name):
         if file.filename == '':
             return jsonify({"success": False, "error": "No selected file"}), 400
 
-        # Read the CSV
         stream = io.StringIO(file.stream.read().decode("UTF8"), newline=None)
         df = pd.read_csv(stream, delimiter='\t')
 
-        # Uppercase columns
         df.columns = [str(c).strip().upper() for c in df.columns]
 
         conn = get_db_connection()
@@ -348,8 +346,12 @@ def handle_upload(table_name):
 
         inserted_count = 0
         for _, row in df.iterrows():
-            salesman = parse_salesman(file.filename)
+            # CRITICAL FIX: Skip rows with missing GRN_NO to prevent 'nan' duplicates
             grn = str(row.get('GRN_NO', '')).strip()
+            if not grn or grn.lower() == 'nan':
+                continue
+
+            salesman = parse_salesman(file.filename)
             producer = str(row.get('PRODUCER', '')).strip() if pd.notna(row.get('PRODUCER')) else ''
             
             comm_raw = str(row.get('COMMODITY', '')) if pd.notna(row.get('COMMODITY')) else ''
