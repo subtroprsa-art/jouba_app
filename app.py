@@ -12,6 +12,7 @@ from googleapiclient.http import MediaIoBaseDownload
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "jdw_super_secret_login_key_2026")  # Needed for sessions
+app.config['SESSION_TYPE'] = 'filesystem' 
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
