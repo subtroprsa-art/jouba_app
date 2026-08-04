@@ -1,7 +1,13 @@
 import os
+import io
+import json
+import pandas as pd
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from flask import Flask, render_template, request, jsonify, redirect, url_for, session
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseDownload
 
 # Initialize Flask app at top-level for Gunicorn
 app = Flask(__name__)
@@ -12,8 +18,18 @@ DATABASE_URL = os.environ.get(
     "postgresql://neondb_owner:npg_1p3mIsQvTzeF@ep-hidden-rain-a8gq43w7.eastus2.azure.neon.tech/neondb?sslmode=require"
 )
 
-# Secret token to authenticate Google Apps Script or external upload triggers
+# Secret token for external API authentication
 APP_SYNC_TOKEN = os.environ.get("APP_SYNC_TOKEN", "jdw_sync_secret_token_2026")
+
+# Google Drive Folder IDs
+FOLDERS = {
+    "floor_raw": "1akYejLRp-bOvdjJEat4Z1XC1frru9j_Y",
+    "floor_processed": "1DKEmqlTMJDBfqv9NsGZJYOuCEZWaf6SG",
+    "stock_raw": "1DrYmim6xThu6KfKRplr5SDBVZc-BFMBm",
+    "stock_processed": "1fLBZHRN9VsR5OfY2eercGPe8BLhVSO2E"
+}
+
+DRIVE_SCOPES = ['https://www.googleapis.com/auth/drive']
 
 
 def get_db_connection():
@@ -21,6 +37,107 @@ def get_db_connection():
 
 def get_current_user():
     return session.get('username', 'Sales Team')
+
+
+# --- GOOGLE DRIVE DIRECT SYNC LOGIC ---
+
+def get_drive_service():
+    creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON")
+    if creds_json:
+        info = json.loads(creds_json)
+        creds = service_account.Credentials.from_service_account_info(info, scopes=DRIVE_SCOPES)
+    else:
+        creds = service_account.Credentials.from_service_account_file('credentials.json', scopes=DRIVE_SCOPES)
+    return build('drive', 'v3', credentials=creds)
+
+def parse_salesman(filename):
+    name = filename.lower()
+    if name.startswith("cdw"):
+        return "Christoff"
+    elif name.startswith("riaa") or name.startswith("riaan"):
+        return "Riaan"
+    elif name.startswith("pot"):
+        return "Pot"
+    return "Unassigned"
+
+def move_drive_file(service, file_id, target_folder_id):
+    file = service.files().get(file_id=file_id, fields='parents').execute()
+    previous_parents = ",".join(file.get('parents', []))
+    service.files().update(
+        fileId=file_id,
+        addParents=target_folder_id,
+        removeParents=previous_parents,
+        fields='id, parents'
+    ).execute()
+
+def process_drive_folder(service, raw_folder_id, processed_folder_id, target_table):
+    query = f"'{raw_folder_id}' in parents and trashed = false"
+    results = service.files().list(q=query, fields="files(id, name)").execute()
+    files = results.get('files', [])
+
+    if not files:
+        return 0
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    total_inserted = 0
+
+    for file_item in files:
+        file_id = file_item['id']
+        file_name = file_item['name']
+        salesman = parse_salesman(file_name)
+
+        request_media = service.files().get_media(fileId=file_id)
+        fh = io.BytesIO()
+        downloader = MediaIoBaseDownload(fh, request_media)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+        fh.seek(0)
+
+        if file_name.lower().endswith('.csv'):
+            df = pd.read_csv(fh)
+        elif file_name.lower().endswith(('.xls', '.xlsx')):
+            df = pd.read_excel(fh)
+        else:
+            continue
+
+        df.columns = [str(c).strip().lower() for c in df.columns]
+
+        # Clear existing records for this salesman
+        cursor.execute(f"DELETE FROM {target_table} WHERE salesman = %s;", (salesman,))
+
+        for idx, row in df.iterrows():
+            seq_val = idx + 1
+            farmer_val, comm_val, var_val, size_val, pack_val, qty_val = "", "", "", "", "", 0
+
+            for col in df.columns:
+                val = str(row[col]).strip() if pd.notna(row[col]) else ""
+                if "seq" in col:
+                    try: seq_val = int(row[col])
+                    except: pass
+                if "producer" in col or "farmer" in col: farmer_val = val
+                if "commodity" in col: comm_val = val
+                if "variety" in col: var_val = val
+                if "size" in col: size_val = val
+                if "pack" in col: pack_val = val
+                if "qty" in col or "quantity" in col:
+                    try: qty_val = int(row[col])
+                    except: qty_val = 0
+
+            cursor.execute(f"""
+                INSERT INTO {target_table} 
+                (seq_nr, salesman, producer, commodity, variety, size, pack, qty, intake_date)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_DATE);
+            """, (seq_val, salesman, farmer_val, comm_val, var_val, size_val, pack_val, qty_val))
+            total_inserted += 1
+
+        conn.commit()
+        move_drive_file(service, file_id, processed_folder_id)
+
+    cursor.close()
+    conn.close()
+    return total_inserted
 
 
 # --- AUTHENTICATION ROUTES ---
@@ -73,6 +190,29 @@ def floor_balance_page():
 
 
 # --- API ENDPOINTS ---
+
+@app.route('/api/sync-drive', methods=['POST', 'GET'])
+def trigger_drive_sync():
+    """Endpoint to trigger quota-free direct Google Drive processing"""
+    if request.method == 'POST' and not session.get('logged_in'):
+        # Allow system/cron invocation via token parameter or logged-in session
+        token = request.args.get('token') or (request.json or {}).get('token')
+        if token != APP_SYNC_TOKEN:
+            return jsonify({"error": "Unauthorized"}), 401
+
+    try:
+        service = get_drive_service()
+        floor_count = process_drive_folder(service, FOLDERS["floor_raw"], FOLDERS["floor_processed"], "floor_records")
+        stock_count = process_drive_folder(service, FOLDERS["stock_raw"], FOLDERS["stock_processed"], "stock_records")
+        
+        return jsonify({
+            "success": True, 
+            "message": "Google Drive sync completed successfully!",
+            "imported": {"floor_records": floor_count, "stock_records": stock_count}
+        }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 
 @app.route('/api/sales-pipeline', methods=['GET'])
 def get_sales_pipeline():
@@ -145,7 +285,6 @@ def get_inventory_data(inv_type):
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    # Sort floor balance by seq_nr ASC, stock records by age DESC
     order_clause = "seq_nr ASC NULLS LAST, age_days DESC" if inv_type == "floor" else "salesman, age_days DESC"
 
     query = f"""
@@ -197,17 +336,14 @@ def get_inventory_data(inv_type):
         return jsonify({"error": str(e)}), 500
 
 
-# --- GOOGLE APPS SCRIPT / AUTOMATED UPLOAD ENDPOINT ---
-
 @app.route('/api/upload-inventory', methods=['POST'])
 def upload_inventory():
     data = request.json or {}
     
-    # Token check for secure API access
     if data.get('token') != APP_SYNC_TOKEN:
         return jsonify({"error": "Unauthorized"}), 401
 
-    target_table = data.get('target_table') # 'stock_records' or 'floor_records'
+    target_table = data.get('target_table')
     salesman = data.get('salesman', 'Unassigned')
     records = data.get('records', [])
 
@@ -218,7 +354,6 @@ def upload_inventory():
     cursor = conn.cursor()
 
     try:
-        # Clear previous entries for this salesman to maintain clean inventory state
         cursor.execute(f"DELETE FROM {target_table} WHERE salesman = %s;", (salesman,))
 
         inserted_count = 0
@@ -278,8 +413,6 @@ def log_contact():
         if conn: conn.close()
         return jsonify({"error": str(e)}), 500
 
-
-# --- SYSTEM HEALTH & DIAGNOSTIC ENDPOINT ---
 
 @app.route('/api/health-check', methods=['GET'])
 def health_check():
