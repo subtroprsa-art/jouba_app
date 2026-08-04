@@ -127,32 +127,52 @@ def get_inventory(inventory_type):
         conn = get_db_connection()
         cursor = conn.cursor()
 
+        # Helper mapping to clean up the full Salesman names
+        salesman_map = {
+            "DE WET, CHRISTOFF REINHARDT": "Christoff",
+            "JOUBERT, RIAAN": "Riaan",
+            "POTGIETER": "Pot"
+        }
+
         if inventory_type == "stock":
-            # SAFEST FIX: Convert integer to date, then get age by simple date subtraction.
+            # FIX 1: Alias producer to farmer_name
+            # FIX 2: Parse 28-JUL-26 correctly
+            # FIX 3: Map salesman names
             query = f"""
                 SELECT 
-                    salesman, 
+                    CASE 
+                        WHEN salesman = 'DE WET, CHRISTOFF REINHARDT' THEN 'Christoff'
+                        WHEN salesman = 'JOUBERT, RIAAN' THEN 'Riaan'
+                        WHEN salesman = 'POTGIETER' THEN 'Pot'
+                        ELSE salesman 
+                    END AS salesman,
                     producer AS farmer_name, 
                     commodity, 
                     variety, 
                     size, 
                     pack AS pack_weight, 
                     qty_floor AS qty,
-                    (CURRENT_DATE - TO_DATE(date_received::text, 'YYYYMMDD')) AS age_days
+                    (CURRENT_DATE - TO_DATE(date_received::text, 'DD-MON-YY')) AS age_days
                 FROM {table}
                 WHERE qty_floor > 0
                 ORDER BY salesman, date_received DESC
             """
         else: # floor_records
+            # Floor CSV had same date format 'DD-MON-YY' in DN_DATE column
             query = f"""
                 SELECT 
-                    salesman, 
+                    CASE 
+                        WHEN salesman = 'DE WET, CHRISTOFF REINHARDT' THEN 'Christoff'
+                        WHEN salesman = 'JOUBERT, RIAAN' THEN 'Riaan'
+                        WHEN salesman = 'POTGIETER' THEN 'Pot'
+                        ELSE salesman 
+                    END AS salesman,
                     prod AS farmer_name, 
                     commodity, 
                     variety, 
                     container AS pack_weight, 
                     qty AS qty,
-                    (CURRENT_DATE - TO_DATE(dn_date::text, 'YYYYMMDD')) AS age_days
+                    (CURRENT_DATE - TO_DATE(dn_date::text, 'DD-MON-YY')) AS age_days
                 FROM {table}
                 WHERE qty > 0
                 ORDER BY salesman, dn_date DESC
