@@ -79,7 +79,7 @@ def process_drive_folder(service, raw_folder_id, processed_folder_id, target_tab
 
     conn = get_db_connection()
     cursor = conn.cursor()
-    total_inserted = 0
+    inserted_count = 0
 
     for file_item in files:
         file_id = file_item['id']
@@ -129,21 +129,22 @@ def process_drive_folder(service, raw_folder_id, processed_folder_id, target_tab
                 (seq_nr, salesman, producer, commodity, variety, size, pack, qty, intake_date)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_DATE);
             """, (seq_val, salesman, farmer_val, comm_val, var_val, size_val, pack_val, qty_val))
-            total_inserted += 1
+            
+            inserted_count += 1
 
         conn.commit()
         move_drive_file(service, file_id, processed_folder_id)
 
     cursor.close()
     conn.close()
-    return int(total_inserted)
+    return int(inserted_count)
 
 def run_auto_sync_job():
     """Background task running every 3 minutes"""
     try:
         service = get_drive_service()
-        floor_count = process_drive_folder(service, FOLDERS["floor_raw"], FOLDERS["floor_processed"], "floor_records")
-        stock_count = process_drive_folder(service, FOLDERS["stock_raw"], FOLDERS["stock_processed"], "stock_records")
+        floor_count = int(process_drive_folder(service, FOLDERS["floor_raw"], FOLDERS["floor_processed"], "floor_records"))
+        stock_count = int(process_drive_folder(service, FOLDERS["stock_raw"], FOLDERS["stock_processed"], "stock_records"))
         if floor_count > 0 or stock_count > 0:
             print(f"⚡ Auto-Sync Complete: Imported {floor_count} floor records & {stock_count} stock records.")
     except Exception as e:
@@ -211,14 +212,14 @@ def sync_drive():
 
     try:
         service = get_drive_service()
-        floor_count = process_drive_folder(service, FOLDERS["floor_raw"], FOLDERS["floor_processed"], "floor_records")
-        stock_count = process_drive_folder(service, FOLDERS["stock_raw"], FOLDERS["stock_processed"], "stock_records")
+        floor_count = int(process_drive_folder(service, FOLDERS["floor_raw"], FOLDERS["floor_processed"], "floor_records"))
+        stock_count = int(process_drive_folder(service, FOLDERS["stock_raw"], FOLDERS["stock_processed"], "stock_records"))
         return jsonify({
             "success": True,
             "message": "Google Drive sync completed successfully!",
             "imported": {
-                "floor_records": int(floor_count),
-                "stock_records": int(stock_count)
+                "floor_records": floor_count,
+                "stock_records": stock_count
             }
         }), 200
     except Exception as e:
