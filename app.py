@@ -2,7 +2,7 @@ import os
 import logging
 from flask import Flask, request, jsonify
 
-# Initialize Flask application (Name must be 'app' for 'gunicorn app:app')
+# Initialize Flask application (Must be named 'app' for Gunicorn)
 app = Flask(__name__)
 
 # Configure logging
@@ -16,7 +16,7 @@ AUTH_TOKEN = os.getenv("SYNC_TOKEN", "jdw_sync_secret_token_2026")
 def process_floor_record_file(file_path: str):
     """
     Parses an individual floor record file.
-    Returns a tuple: (items_count, bag_total)
+    Returns a tuple: (items_count, bag_count)
     
     Includes 15kg and 20kg counts in the bag total.
     """
@@ -46,29 +46,25 @@ def process_floor_record_file(file_path: str):
 def process_drive_folder(folder_path: str):
     """
     Scans the local drive directory for floor records and aggregates stats.
+    Creates the directory if it does not already exist.
     """
+    # Ensure directory exists to avoid "Directory not found" errors
     if not os.path.exists(folder_path):
-        return {
-            "status": "error",
-            "message": f"Directory not found: {folder_path}",
-            "processed_files": 0,
-            "total_items": 0,
-            "total_bags": 0,
-            "records": ()
-        }
+        os.makedirs(folder_path, exist_ok=True)
+        logger.info(f"Directory missing. Created path: {folder_path}")
 
-    # IMPORTANT: Keep accumulators as integers to avoid tuple-int addition errors
+    # Integer accumulators prevent tuple-int type errors
     processed_files_count = 0
     total_items = 0
     total_bags = 0
-    floor_records = ()  # Holds individual file record tuples
+    floor_records = ()  # Holds individual record entries
 
     for root, _, files in os.walk(folder_path):
         for file_name in files:
             if file_name.endswith((".csv", ".json", ".txt", ".dat")):
                 file_path = os.path.join(root, file_name)
                 
-                # Unpack the returned tuple (items, bags) into integer variables
+                # Explicitly unpack the returned tuple into integers
                 file_items, file_bags = process_floor_record_file(file_path)
                 
                 processed_files_count += 1
@@ -81,7 +77,7 @@ def process_drive_folder(folder_path: str):
                     "bags": file_bags
                 }
                 
-                # Correct tuple concatenation (note the trailing comma)
+                # Single-element tuple concatenation (requires trailing comma)
                 floor_records = floor_records + (record_entry,)
 
     return {
