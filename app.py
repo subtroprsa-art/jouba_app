@@ -180,28 +180,52 @@ def sync_drive():
                 if len(lines) <= 1:
                     continue
 
-                reader = csv.reader(lines)
+                # These exports are TAB-delimited, not comma-delimited.
+                reader = csv.reader(lines, delimiter='\t')
                 headers = [h.strip().lower() for h in next(reader, [])]
+
+                def col_index(name):
+                    return headers.index(name) if name in headers else None
+
+                # Different file layouts per folder, so map columns explicitly
+                # instead of doing a fuzzy "qty"/"pack" substring match, which
+                # was matching multiple QTY_* columns and no PACK column at all.
+                if folder_name == "floor_raw":
+                    qty_idx = col_index("qty")
+                    pack_idx = col_index("container")
+                    commodity_idx = None
+                else:  # stock_raw
+                    qty_idx = col_index("qty_floor")
+                    pack_idx = None
+                    commodity_idx = col_index("commodity")
+
+                def get_val(row, i):
+                    return row[i].strip() if i is not None and i < len(row) else ""
 
                 for idx, row in enumerate(reader, start=1):
                     if not row or not any(row):
                         continue
+
+                    qty_val = get_val(row, qty_idx)
+                    qty = int(qty_val) if qty_val.isdigit() else 0
+
+                    if pack_idx is not None:
+                        pack = get_val(row, pack_idx)
+                    else:
+                        # stock_raw: pack code is the 2nd comma-separated
+                        # field inside COMMODITY, e.g. "AVOS,BG150,AH,2,M,*,*"
+                        commodity_val = get_val(row, commodity_idx)
+                        parts = commodity_val.split(",")
+                        pack = parts[1].strip() if len(parts) > 1 else ""
 
                     record = {
                         "file_name": file_name,
                         "salesman": parse_salesman(file_name),
                         "folder": folder_name,
                         "seq_nr": idx,
-                        "qty": 0,
-                        "pack": ""
+                        "qty": qty,
+                        "pack": pack
                     }
-
-                    for col_idx, h in enumerate(headers):
-                        val = row[col_idx].strip() if col_idx < len(row) else ""
-                        if "pack" in h:
-                            record["pack"] = val
-                        if "qty" in h or "quantity" in h:
-                            record["qty"] = int(val) if val.isdigit() else 0
 
                     all_records.append(record)
 
