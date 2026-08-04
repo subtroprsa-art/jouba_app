@@ -3,6 +3,7 @@ import io
 import json
 import pandas as pd
 import psycopg2
+from psycopg2.extras import execute_values
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
@@ -74,45 +75,74 @@ def process_folder(service, raw_folder_id, processed_folder_id, target_table):
             _, done = downloader.next_chunk()
         fh.seek(0)
 
-        if file_name.lower().endswith('.csv'):
-            df = pd.read_csv(fh)
+        # Handle tab-delimited or comma-delimited CSVs
+        if file_name.lower().endswith(('.csv', '.txt')):
+            try:
+                df = pd.read_csv(fh, sep='\t')
+                if len(df.columns) <= 1:
+                    fh.seek(0)
+                    df = pd.read_csv(fh, sep=',')
+            except Exception:
+                fh.seek(0)
+                df = pd.read_csv(fh)
         elif file_name.lower().endswith(('.xls', '.xlsx')):
             df = pd.read_excel(fh)
         else:
             continue
 
-        df.columns = [str(c).strip().lower() for c in df.columns]
+        df.columns = [str(c).strip().upper() for c in df.columns]
 
         cursor.execute(f"DELETE FROM {target_table} WHERE salesman = %s;", (salesman,))
 
-        inserted_count = 0
+        records = []
         for idx, row in df.iterrows():
             seq_val = idx + 1
-            farmer_val, comm_val, var_val, size_val, pack_val, qty_val = "", "", "", "", "", 0
+            grn_val = str(row.get('GRN_NO', '')).strip() if pd.notna(row.get('GRN_NO')) else ''
+            producer_val = str(row.get('PRODUCER', '')).strip() if pd.notna(row.get('PRODUCER')) else ''
 
-            for col in df.columns:
-                val = str(row[col]) if pd.notna(row[col]) else ""
-                if "seq" in col:
-                    try: seq_val = int(row[col])
-                    except: pass
-                if "producer" in col or "farmer" in col: farmer_val = val
-                if "commodity" in col: comm_val = val
-                if "variety" in col: var_val = val
-                if "size" in col: size_val = val
-                if "pack" in col: pack_val = val
-                if "qty" in col or "quantity" in col:
-                    try: qty_val = int(row[col])
-                    except: qty_val = 0
+            # Parse composite COMMODITY string ("AVOS,BG150,AH,2,M,*,*")
+            comm_raw = str(row.get('COMMODITY', '')) if pd.notna(row.get('COMMODITY')) else ''
+            comm_parts = [p.strip() for p in comm_raw.split(',')] if comm_raw else []
 
-            cursor.execute(f"""
+            commodity = comm_parts[0] if len(comm_parts) > 0 else comm_raw
+            pack      = comm_parts[1] if len(comm_parts) > 1 else str(row.get('PACK', ''))
+            variety   = comm_parts[2] if len(comm_parts) > 2 else str(row.get('VARIETY', ''))
+            grade     = comm_parts[3] if len(comm_parts) > 3 else str(row.get('GRADE', '1'))
+            size      = comm_parts[4] if len(comm_parts) > 4 else str(row.get('SIZE', '*'))
+            count     = comm_parts[5] if len(comm_parts) > 5 else str(row.get('COUNT', '*'))
+
+            # Parse quantities cleanly
+            def parse_int(val):
+                try:
+                    return int(float(val)) if pd.notna(val) and str(val).strip() != '' else 0
+                except (ValueError, TypeError):
+                    return 0
+
+            qty_rec   = parse_int(row.get('QTY_REC', 0))
+            qty_sold  = parse_int(row.get('QTY_SOLD', 0))
+            qty_floor = parse_int(row.get('QTY_FLOOR', 0))
+            
+            # Default single qty for floor_records table fallback
+            qty = qty_floor if qty_floor > 0 else (qty_rec - qty_sold)
+
+            records.append((
+                seq_val, salesman, grn_val, producer_val, 
+                commodity, pack, variety, grade, size, count, 
+                qty, qty_rec, qty_sold, qty_floor
+            ))
+
+        if records:
+            insert_query = f"""
                 INSERT INTO {target_table} 
-                (seq_nr, salesman, producer, commodity, variety, size, pack, qty, intake_date)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_DATE);
-            """, (seq_val, salesman, farmer_val, comm_val, var_val, size_val, pack_val, qty_val))
-            inserted_count += 1
+                (seq_nr, salesman, grn, producer, commodity, pack, variety, grade, size, count, qty, qty_rec, qty_sold, qty_floor, intake_date)
+                VALUES %s;
+            """
+            # Append CURRENT_DATE to each record row
+            records_with_date = [r + (pd.Timestamp.now().date(),) for r in records]
+            execute_values(cursor, insert_query, records_with_date)
 
         conn.commit()
-        print(f"✅ Imported {inserted_count} rows for {salesman}.")
+        print(f"✅ Imported {len(records)} rows for {salesman}.")
         move_file(service, file_id, processed_folder_id)
 
     cursor.close()
