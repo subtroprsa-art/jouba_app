@@ -146,7 +146,7 @@ def run_auto_sync_job():
     except Exception as e:
         print(f"❌ Auto-Sync Background Job Error: {str(e)}")
 
-# Initialize background scheduler (checks Drive every 3 minutes)
+# Initialize and start background scheduler (checks Drive every 3 minutes)
 scheduler = BackgroundScheduler(daemon=True)
 scheduler.add_job(run_auto_sync_job, 'interval', minutes=3)
 scheduler.start()
@@ -199,6 +199,27 @@ def floor_balance_page():
 
 
 # --- API ENDPOINTS ---
+
+@app.route('/api/sync-drive', methods=['GET', 'POST'])
+def sync_drive():
+    token = request.args.get('token') or (request.json and request.json.get('token'))
+    if token != APP_SYNC_TOKEN:
+        return jsonify({"error": "Unauthorized sync attempt"}), 401
+
+    try:
+        service = get_drive_service()
+        floor_count = process_drive_folder(service, FOLDERS["floor_raw"], FOLDERS["floor_processed"], "floor_records")
+        stock_count = process_drive_folder(service, FOLDERS["stock_raw"], FOLDERS["stock_processed"], "stock_records")
+        return jsonify({
+            "success": True,
+            "message": "Google Drive sync completed successfully!",
+            "imported": {
+                "floor_records": floor_count,
+                "stock_records": stock_count
+            }
+        }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/sales-pipeline', methods=['GET'])
 def get_sales_pipeline():
