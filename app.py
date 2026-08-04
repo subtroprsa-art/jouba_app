@@ -128,7 +128,7 @@ def get_inventory(inventory_type):
         cursor = conn.cursor()
 
         if inventory_type == "stock":
-            # FIX: date_received is integer (YYYYMMDD). Convert to date using TO_DATE.
+            # SAFEST FIX: Convert integer to date, then get age by simple date subtraction.
             query = f"""
                 SELECT 
                     salesman, 
@@ -138,13 +138,12 @@ def get_inventory(inventory_type):
                     size, 
                     pack AS pack_weight, 
                     qty_floor AS qty,
-                    EXTRACT(DAY FROM (CURRENT_DATE - TO_DATE(date_received::text, 'YYYYMMDD'))) AS age_days
+                    (CURRENT_DATE - TO_DATE(date_received::text, 'YYYYMMDD')) AS age_days
                 FROM {table}
                 WHERE qty_floor > 0
                 ORDER BY salesman, date_received DESC
             """
         else: # floor_records
-            # FIX: dn_date is integer (YYYYMMDD). Convert to date using TO_DATE.
             query = f"""
                 SELECT 
                     salesman, 
@@ -153,7 +152,7 @@ def get_inventory(inventory_type):
                     variety, 
                     container AS pack_weight, 
                     qty AS qty,
-                    EXTRACT(DAY FROM (CURRENT_DATE - TO_DATE(dn_date::text, 'YYYYMMDD'))) AS age_days
+                    (CURRENT_DATE - TO_DATE(dn_date::text, 'YYYYMMDD')) AS age_days
                 FROM {table}
                 WHERE qty > 0
                 ORDER BY salesman, dn_date DESC
