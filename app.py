@@ -43,12 +43,10 @@ def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
 def get_drive_service():
-    """Authenticates with Google Drive using GOOGLE_CREDENTIALS_JSON."""
     service_account_info = os.getenv("GOOGLE_CREDENTIALS_JSON")
     if not service_account_info:
         logger.error("GOOGLE_CREDENTIALS_JSON environment variable is missing.")
         return None
-
     try:
         creds_dict = json.loads(service_account_info)
         creds = service_account.Credentials.from_service_account_info(
@@ -58,17 +56,6 @@ def get_drive_service():
     except Exception as e:
         logger.exception("Failed to build Google Drive service")
         return None
-
-
-def parse_salesman(filename: str) -> str:
-    name = filename.lower()
-    if name.startswith("cdw"):
-        return "Christoff"
-    if name.startswith("riaa") or name.startswith("riaan"):
-        return "Riaan"
-    if name.startswith("pot"):
-        return "Pot"
-    return "Unassigned"
 
 
 # ===================== HTML ROUTES =====================
@@ -83,7 +70,6 @@ def login_page():
 def login_action():
     username = request.form.get("username")
     password = request.form.get("password")
-
     if username in USERS and USERS[username] == password:
         session["user"] = username
         session["user_name"] = "Riaan Joubert" if username == "riaan" else "Christoff de Wet"
@@ -127,7 +113,7 @@ def inventory_page():
     return render_template("inventory.html")
 
 
-# ===================== DATA API ROUTES (NEW) =====================
+# ===================== DATA API ROUTES =====================
 
 @app.route("/api/inventory/<inventory_type>", methods=["GET"])
 def get_inventory(inventory_type):
@@ -135,18 +121,44 @@ def get_inventory(inventory_type):
     if not session.get("user"):
         return jsonify({"error": "Unauthorized"}), 401
 
+    # Map to actual DB tables
     table = "stock_records" if inventory_type == "stock" else "floor_records"
+    
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # Query to fetch inventory with age calculation
-        query = f"""
-            SELECT salesman, farmer AS farmer_name, commodity, variety, size, pack_weight, qty,
-                   EXTRACT(DAY FROM (CURRENT_DATE - intake_date)) AS age_days
-            FROM {table}
-            ORDER BY salesman, intake_date DESC
-        """
+        # Query the live data tables and ALIAS columns to match your HTML expectations
+        if inventory_type == "stock":
+            query = f"""
+                SELECT 
+                    salesman, 
+                    producer AS farmer_name, 
+                    commodity, 
+                    variety, 
+                    size, 
+                    pack AS pack_weight, 
+                    qty_floor AS qty,
+                    EXTRACT(DAY FROM (CURRENT_DATE - date_received)) AS age_days
+                FROM {table}
+                WHERE qty_floor > 0
+                ORDER BY salesman, date_received DESC
+            """
+        else: # floor_records
+            query = f"""
+                SELECT 
+                    salesman, 
+                    prod AS farmer_name, 
+                    commodity, 
+                    variety, 
+                    container AS pack_weight, 
+                    qty AS qty,
+                    EXTRACT(DAY FROM (CURRENT_DATE - dn_date)) AS age_days
+                FROM {table}
+                WHERE qty > 0
+                ORDER BY salesman, dn_date DESC
+            """
+
         cursor.execute(query)
         rows = cursor.fetchall()
         cursor.close()
@@ -169,7 +181,6 @@ def get_inventory(inventory_type):
 
 @app.route("/api/sales-pipeline", methods=["GET"])
 def get_sales_pipeline():
-    """Returns top buyers with their spending and available commodities."""
     if not session.get("user"):
         return jsonify({"error": "Unauthorized"}), 401
 
@@ -177,27 +188,33 @@ def get_sales_pipeline():
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # 1. Get top buyers (this assumes you have a 'buyer_history' table - adjust if your table name differs)
-        # If you don't have a buyer history table yet, this will return an empty list.
-        # For now, I'll return a dummy structure so the page doesn't break.
+        # Get top buyers and their phones
         cursor.execute("""
-            SELECT buyer_name AS buyer, SUM(total_spent) as total_spent, COUNT(*) as total_units, phone
-            FROM buyer_history
-            GROUP BY buyer_name, phone
+            SELECT 
+                bh.buyer AS buyer, 
+                SUM(bh.total) as total_spent, 
+                COUNT(*) as total_units, 
+                bp.phone
+            FROM buyer_history bh
+            LEFT JOIN buyer_phones bp ON bh.buyer = bp.buyer_name
+            GROUP BY bh.buyer, bp.phone
             ORDER BY total_spent DESC
             LIMIT 20
         """)
         buyers = cursor.fetchall()
 
-        # 2. Get available commodities from stock_records
-        cursor.execute("SELECT DISTINCT commodity FROM stock_records WHERE qty > 0")
+        # Get distinct commodities currently on floor/stock
+        cursor.execute("""
+            SELECT DISTINCT commodity FROM stock_records WHERE qty_floor > 0
+            UNION
+            SELECT DISTINCT commodity FROM floor_records WHERE qty > 0
+        """)
         commodities_raw = cursor.fetchall()
         commodities = [row['commodity'] for row in commodities_raw if row['commodity']]
 
         cursor.close()
         conn.close()
 
-        # Format response
         pipeline = []
         for b in buyers:
             pipeline.append({
@@ -206,20 +223,18 @@ def get_sales_pipeline():
                 "total_units": int(b['total_units']) if b['total_units'] else 0,
                 "phone": b['phone'] or "",
                 "commodities": commodities,
-                "contacted_by": None  # You can extend this later
+                "contacted_by": None
             })
 
         return jsonify({"pipeline": pipeline}), 200
 
     except Exception as e:
         logger.exception("Error fetching pipeline")
-        # Return empty list so frontend doesn't crash, but log the error
         return jsonify({"pipeline": [], "error": str(e)}), 500
 
 
 @app.route("/api/buyer-details/<buyer_name>", methods=["GET"])
 def get_buyer_details(buyer_name):
-    """Returns detailed product matches for a specific buyer."""
     if not session.get("user"):
         return jsonify({"error": "Unauthorized"}), 401
 
@@ -227,12 +242,11 @@ def get_buyer_details(buyer_name):
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # This is a mock query - adjust based on your actual buyer history table structure
         cursor.execute("""
-            SELECT commodity, pack_weight as pack, SUM(qty) as total_qty
+            SELECT commodity, pack, SUM(qty) as total_qty
             FROM buyer_history
-            WHERE buyer_name = %s
-            GROUP BY commodity, pack_weight
+            WHERE buyer = %s
+            GROUP BY commodity, pack
             ORDER BY total_qty DESC
             LIMIT 10
         """, (buyer_name,))
@@ -250,7 +264,6 @@ def get_buyer_details(buyer_name):
 
 @app.route("/api/mark-contacted", methods=["POST"])
 def mark_contacted():
-    """Marks a buyer as contacted (for pipeline locking)."""
     if not session.get("user"):
         return jsonify({"error": "Unauthorized"}), 401
 
@@ -262,8 +275,12 @@ def mark_contacted():
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # Add a 'contacted_by' column to your buyer_history table first if you want this to persist.
-        # For now, we'll just return success so the frontend locks it for this session.
+        cursor.execute("""
+            INSERT INTO buyer_contact_log (buyer, contacted_by, contacted_at)
+            VALUES (%s, %s, NOW())
+        """, (buyer, user))
+        
+        conn.commit()
         cursor.close()
         conn.close()
         
@@ -282,10 +299,8 @@ def health_check():
 
 @app.route("/api/upload-inventory", methods=["POST"])
 def upload_inventory():
-    """Handles POST payloads pushed directly from Google Apps Script."""
     try:
         data = request.get_json(silent=True) or {}
-
         token = data.get("token") or request.headers.get("X-Sync-Token") or request.args.get("token")
         if token != AUTH_TOKEN:
             return jsonify({"success": False, "error": "Unauthorized"}), 401
@@ -336,7 +351,6 @@ def upload_inventory():
 
 @app.route("/api/sync-drive", methods=["GET", "POST"])
 def sync_drive():
-    """Debug route: Scans Google Drive and outputs raw contents and permissions."""
     token = request.args.get("token") or request.headers.get("X-Sync-Token")
     if token != AUTH_TOKEN:
         return jsonify({"success": False, "error": "Unauthorized"}), 401
@@ -362,17 +376,11 @@ def sync_drive():
             results = service.files().list(q=query, fields="files(id, name, mimeType)").execute()
             raw_files = results.get("files", [])
             total_files_found += len(raw_files)
-            folder_file_details = []
 
             for f in raw_files:
                 file_id = f["id"]
                 file_name = f["name"]
                 mime_type = f.get("mimeType", "")
-                folder_file_details.append({
-                    "id": file_id,
-                    "name": file_name,
-                    "mimeType": mime_type
-                })
 
                 if mime_type == "application/vnd.google-apps.spreadsheet":
                     request_media = service.files().export_media(fileId=file_id, mimeType="text/csv")
@@ -398,14 +406,13 @@ def sync_drive():
                 def col_index(name):
                     return headers.index(name) if name in headers else None
 
+                # Determine column indexes for floor vs stock files
                 if folder_name == "floor_raw":
                     qty_idx = col_index("qty")
                     pack_idx = col_index("container")
-                    commodity_idx = None
                 else:
                     qty_idx = col_index("qty_floor")
-                    pack_idx = None
-                    commodity_idx = col_index("commodity")
+                    pack_idx = col_index("pack")
 
                 def get_val(row, i):
                     return row[i].strip() if i is not None and i < len(row) else ""
@@ -415,12 +422,7 @@ def sync_drive():
                         continue
                     qty_val = get_val(row, qty_idx)
                     qty = int(qty_val) if qty_val.isdigit() else 0
-                    if pack_idx is not None:
-                        pack = get_val(row, pack_idx)
-                    else:
-                        commodity_val = get_val(row, commodity_idx)
-                        parts = commodity_val.split(",")
-                        pack = parts[1].strip() if len(parts) > 1 else ""
+                    pack = get_val(row, pack_idx)
 
                     all_records.append({
                         "file_name": file_name,
@@ -434,15 +436,12 @@ def sync_drive():
             debug_info[folder_name] = {
                 "folder_id": folder_id,
                 "file_count": len(raw_files),
-                "files": folder_file_details
+                "files": [{"id": f["id"], "name": f["name"], "mimeType": f.get("mimeType", "")} for f in raw_files]
             }
 
         except Exception as e:
             logger.exception(f"Error checking folder {folder_name}")
-            debug_info[folder_name] = {
-                "folder_id": folder_id,
-                "error": str(e)
-            }
+            debug_info[folder_name] = {"folder_id": folder_id, "error": str(e)}
 
     return jsonify({
         "success": True,
@@ -452,6 +451,17 @@ def sync_drive():
         "records": all_records
     }), 200
 
+
+# Helper function for parsing salesman from filename
+def parse_salesman(filename: str) -> str:
+    name = filename.lower()
+    if name.startswith("cdw"):
+        return "Christoff"
+    if name.startswith("riaa") or name.startswith("riaan"):
+        return "Riaan"
+    if name.startswith("pot"):
+        return "Pot"
+    return "Unassigned"
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
