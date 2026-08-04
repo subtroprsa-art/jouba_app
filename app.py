@@ -15,12 +15,13 @@ logger = logging.getLogger(__name__)
 # Authentication token
 AUTH_TOKEN = os.getenv("SYNC_TOKEN", "jdw_sync_secret_token_2026")
 
+# Target Raw Folder IDs
+FOLDER_FLOOR_BALANCE = os.getenv("GOOGLE_DRIVE_FOLDER_ID_FLOOR", "1akYejLRp-bOvdjJEat4Z1XC1frru9j_Y")
+FOLDER_STOCK_SCAN = os.getenv("GOOGLE_DRIVE_FOLDER_ID_STOCK", "1DrYmim6xThu6KfKRplr5SDBVZc-BFMBm")
+
 
 def get_drive_service():
-    """
-    Authenticates with Google Drive using the Service Account JSON 
-    stored in the GOOGLE_CREDENTIALS_JSON environment variable.
-    """
+    """Authenticates with Google Drive using GOOGLE_CREDENTIALS_JSON."""
     service_account_info = os.getenv("GOOGLE_CREDENTIALS_JSON")
     if not service_account_info:
         logger.error("GOOGLE_CREDENTIALS_JSON environment variable is missing.")
@@ -46,113 +47,6 @@ def parse_salesman(filename: str) -> str:
     if name.startswith("pot"):
         return "Pot"
     return "Unassigned"
-
-
-def process_drive_folder_direct(folder_id: str, target_table: str):
-    """
-    Fetches files directly from a Google Drive folder using the Drive API,
-    parses CSV records, and counts item and bag totals.
-    """
-    service = get_drive_service()
-    if not service:
-        return {
-            "success": False, 
-            "error": "Google Drive authentication failed or credentials missing."
-        }
-
-    try:
-        query = f"'{folder_id}' in parents and trashed = false"
-        results = service.files().list(q=query, fields="files(id, name)").execute()
-        files = results.get("files", [])
-
-        total_items = 0
-        total_bags = 0
-        all_records = []
-        processed_file_count = 0
-
-        for file in files:
-            file_id = file["id"]
-            file_name = file["name"]
-
-            if not file_name.lower().endswith(".csv"):
-                continue
-
-            processed_file_count += 1
-            salesman = parse_salesman(file_name)
-
-            # Download file into memory
-            request_media = service.files().get_media(fileId=file_id)
-            fh = io.BytesIO()
-            downloader = MediaIoBaseDownload(fh, request_media)
-            done = False
-            while not done:
-                _, done = downloader.next_chunk()
-
-            content = fh.getvalue().decode("utf-8", errors="ignore")
-            lines = content.splitlines()
-
-            if len(lines) <= 1:
-                continue
-
-            reader = csv.reader(lines)
-            headers = [h.strip().lower() for h in next(reader, [])]
-
-            for idx, row in enumerate(reader, start=1):
-                if not row:
-                    continue
-
-                record = {
-                    "file_name": file_name,
-                    "salesman": salesman,
-                    "seq_nr": idx,
-                    "farmer": "",
-                    "commodity": "",
-                    "variety": "",
-                    "size": "",
-                    "pack": "",
-                    "qty": 0
-                }
-
-                for col_idx, h in enumerate(headers):
-                    val = row[col_idx].strip() if col_idx < len(row) else ""
-                    if "seq" in h:
-                        record["seq_nr"] = int(val) if val.isdigit() else idx
-                    if "producer" in h or "farmer" in h:
-                        record["farmer"] = val
-                    if "commodity" in h:
-                        record["commodity"] = val
-                    if "variety" in h:
-                        record["variety"] = val
-                    if "size" in h:
-                        record["size"] = val
-                    if "pack" in h:
-                        record["pack"] = val
-                    if "qty" in h or "quantity" in h:
-                        record["qty"] = int(val) if val.isdigit() else 0
-
-                qty = record["qty"]
-                pack = str(record["pack"]).lower()
-
-                total_items += qty
-                # Business Logic: 15kg and 20kg are included in the bag total
-                if "15kg" in pack or "20kg" in pack or "bag" in pack:
-                    total_bags += qty
-
-                all_records.append(record)
-
-        return {
-            "success": True,
-            "status": "success",
-            "table": target_table,
-            "processed_files": processed_file_count,
-            "total_items": total_items,
-            "total_bags": total_bags,
-            "records": all_records
-        }
-
-    except Exception as e:
-        logger.exception("Error scanning Google Drive folder")
-        return {"success": False, "error": str(e)}
 
 
 @app.route("/", methods=["GET"])
@@ -225,16 +119,112 @@ def upload_inventory():
 
 @app.route("/api/sync-drive", methods=["GET", "POST"])
 def sync_drive():
-    """Triggered via GET to pull directly from Google Drive."""
+    """Debug route: Scans Google Drive and outputs raw contents and permissions."""
     token = request.args.get("token") or request.headers.get("X-Sync-Token")
     if token != AUTH_TOKEN:
         return jsonify({"success": False, "error": "Unauthorized"}), 401
 
-    folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID_FLOOR", "1akYejLRp-bOvdjJEat4Z1XC1frru9j_Y")
-    result = process_drive_folder_direct(folder_id, "floor_records")
+    service = get_drive_service()
+    if not service:
+        return jsonify({
+            "success": False,
+            "error": "Google Drive authentication failed. Check GOOGLE_CREDENTIALS_JSON in Render environment."
+        }), 500
 
-    status_code = 200 if result.get("success") else 500
-    return jsonify(result), status_code
+    debug_info = {}
+    folders_to_check = {
+        "floor_raw": FOLDER_FLOOR_BALANCE,
+        "stock_raw": FOLDER_STOCK_SCAN
+    }
+
+    total_files_found = 0
+    all_records = []
+
+    for folder_name, folder_id in folders_to_check.items():
+        try:
+            query = f"'{folder_id}' in parents and trashed = false"
+            results = service.files().list(q=query, fields="files(id, name, mimeType)").execute()
+            raw_files = results.get("files", [])
+            total_files_found += len(raw_files)
+
+            folder_file_details = []
+
+            for f in raw_files:
+                file_id = f["id"]
+                file_name = f["name"]
+                mime_type = f.get("mimeType", "")
+
+                folder_file_details.append({
+                    "id": file_id,
+                    "name": file_name,
+                    "mimeType": mime_type
+                })
+
+                # Process file content if CSV or Google Sheet
+                if mime_type == "application/vnd.google-apps.spreadsheet":
+                    request_media = service.files().export_media(fileId=file_id, mimeType="text/csv")
+                elif file_name.lower().endswith(".csv") or mime_type == "text/csv":
+                    request_media = service.files().get_media(fileId=file_id)
+                else:
+                    continue
+
+                fh = io.BytesIO()
+                downloader = MediaIoBaseDownload(fh, request_media)
+                done = False
+                while not done:
+                    _, done = downloader.next_chunk()
+
+                content = fh.getvalue().decode("utf-8", errors="ignore")
+                lines = content.splitlines()
+
+                if len(lines) <= 1:
+                    continue
+
+                reader = csv.reader(lines)
+                headers = [h.strip().lower() for h in next(reader, [])]
+
+                for idx, row in enumerate(reader, start=1):
+                    if not row or not any(row):
+                        continue
+
+                    record = {
+                        "file_name": file_name,
+                        "salesman": parse_salesman(file_name),
+                        "folder": folder_name,
+                        "seq_nr": idx,
+                        "qty": 0,
+                        "pack": ""
+                    }
+
+                    for col_idx, h in enumerate(headers):
+                        val = row[col_idx].strip() if col_idx < len(row) else ""
+                        if "pack" in h:
+                            record["pack"] = val
+                        if "qty" in h or "quantity" in h:
+                            record["qty"] = int(val) if val.isdigit() else 0
+
+                    all_records.append(record)
+
+            debug_info[folder_name] = {
+                "folder_id": folder_id,
+                "file_count": len(raw_files),
+                "files": folder_file_details
+            }
+
+        except Exception as e:
+            logger.exception(f"Error checking folder {folder_name}")
+            debug_info[folder_name] = {
+                "folder_id": folder_id,
+                "error": str(e)
+            }
+
+    return jsonify({
+        "success": True,
+        "total_files_found": total_files_found,
+        "processed_records_count": len(all_records),
+        "debug_folders": debug_info,
+        "records": all_records
+    }), 200
 
 
 if __name__ == "__main__":
