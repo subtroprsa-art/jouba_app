@@ -3,6 +3,7 @@ import io
 import json
 import logging
 import csv
+import pandas as pd
 from flask import Flask, request, jsonify, render_template, redirect, url_for, session
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -311,6 +312,91 @@ def mark_contacted():
 
     except Exception as e:
         logger.exception("Error marking contacted")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+# ===================== UPLOAD ENDPOINTS FOR upload_all.py =====================
+
+@app.route("/upload-stock", methods=["POST"])
+def upload_stock():
+    """Accepts CSV uploads from upload_all.py and inserts into stock_records"""
+    return handle_upload("stock_records")
+
+@app.route("/upload-floor", methods=["POST"])
+def upload_floor():
+    """Accepts CSV uploads from upload_all.py and inserts into floor_records"""
+    return handle_upload("floor_records")
+
+def handle_upload(table_name):
+    try:
+        if 'file' not in request.files:
+            return jsonify({"success": False, "error": "No file part"}), 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({"success": False, "error": "No selected file"}), 400
+
+        # Read the CSV
+        stream = io.StringIO(file.stream.read().decode("UTF8"), newline=None)
+        df = pd.read_csv(stream, delimiter='\t')
+
+        # Uppercase columns
+        df.columns = [str(c).strip().upper() for c in df.columns]
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        inserted_count = 0
+        for _, row in df.iterrows():
+            salesman = parse_salesman(file.filename)
+            grn = str(row.get('GRN_NO', '')).strip()
+            producer = str(row.get('PRODUCER', '')).strip() if pd.notna(row.get('PRODUCER')) else ''
+            
+            comm_raw = str(row.get('COMMODITY', '')) if pd.notna(row.get('COMMODITY')) else ''
+            comm_parts = [p.strip() for p in comm_raw.split(',')] if comm_raw else []
+            
+            commodity = comm_parts[0] if len(comm_parts) > 0 else comm_raw
+            pack = comm_parts[1] if len(comm_parts) > 1 else str(row.get('PACK', ''))
+            variety = comm_parts[2] if len(comm_parts) > 2 else str(row.get('VARIETY', ''))
+            grade = comm_parts[3] if len(comm_parts) > 3 else str(row.get('GRADE', '1'))
+            size = comm_parts[4] if len(comm_parts) > 4 else str(row.get('SIZE', '*'))
+            count = comm_parts[5] if len(comm_parts) > 5 else str(row.get('COUNT', '*'))
+
+            def parse_int(val):
+                try:
+                    return int(float(val)) if pd.notna(val) and str(val).strip() != '' else 0
+                except (ValueError, TypeError):
+                    return 0
+
+            qty_floor = parse_int(row.get('QTY_FLOOR', 0))
+
+            cursor.execute(f"""
+                INSERT INTO {table_name} 
+                (salesman, grn, producer, commodity, pack, variety, grade, size, count, qty, qty_floor, intake_date)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_DATE)
+            """, (
+                salesman,
+                grn,
+                producer,
+                commodity,
+                pack,
+                variety,
+                grade,
+                size,
+                count,
+                qty_floor,
+                qty_floor,
+            ))
+            inserted_count += 1
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        return jsonify({"success": True, "message": f"Inserted {inserted_count} rows"}), 200
+
+    except Exception as e:
+        logger.exception("Error handling upload")
         return jsonify({"success": False, "error": str(e)}), 500
 
 
