@@ -159,7 +159,7 @@ def get_inventory(inventory_type):
                 inventory[sm] = []
 
             # 2. Determine Farmer Name
-            farmer_name = row.get('producer') or row.get('prod') or row.get('farmer_name') or "Unknown Producer"
+           farmer_name = row.get('producer') or row.get('PRODUCER') or row.get('prod') or row.get('farmer_name') or "Unknown Producer"
 
             # 3. Determine Qty
             qty = row.get('qty_floor') or row.get('qty') or 0
