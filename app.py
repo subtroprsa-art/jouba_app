@@ -158,8 +158,8 @@ def get_inventory(inventory_type):
             if sm not in inventory:
                 inventory[sm] = []
 
-            # 2. Determine Farmer Name
-           farmer_name = row.get('producer') or row.get('PRODUCER') or row.get('prod') or row.get('farmer_name') or "Unknown Producer"
+            # 2. Determine Farmer Name (FIXED to handle uppercase PRODUCER)
+            farmer_name = row.get('producer') or row.get('PRODUCER') or row.get('prod') or row.get('farmer_name') or "Unknown Producer"
 
             # 3. Determine Qty
             qty = row.get('qty_floor') or row.get('qty') or 0
@@ -346,7 +346,6 @@ def handle_upload(table_name):
 
         inserted_count = 0
         for _, row in df.iterrows():
-            # CRITICAL FIX: Skip rows with missing GRN_NO to prevent 'nan' duplicates
             grn = str(row.get('GRN_NO', '')).strip()
             if not grn or grn.lower() == 'nan':
                 continue
