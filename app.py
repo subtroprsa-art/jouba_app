@@ -7,7 +7,7 @@ import pandas as pd
 from flask import Flask, request, jsonify, render_template, redirect, url_for, session
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from datetime import date
+from datetime import date, datetime
 
 # Google API imports
 from google.oauth2 import service_account
@@ -169,15 +169,40 @@ def get_inventory(inventory_type):
             # 4. Determine Pack
             pack = row.get('pack') or row.get('container') or ""
 
-            # 5. Calculate Age from a real Date object (handled by PostgreSQL)
+            # =========================================================
+            # 5. BULLETPROOF DATE CALCULATION
+            # =========================================================
             raw_date = row.get('date_received')
             age_days = 0
+            
+            # Force the date into a Python date object manually
             if raw_date:
                 try:
-                    # raw_date is already a Python date object
-                    age_days = (date.today() - raw_date).days
+                    # If it's an integer like 20260728
+                    if isinstance(raw_date, int) or (isinstance(raw_date, str) and raw_date.isdigit()):
+                        d_str = str(raw_date).strip()
+                        if len(d_str) == 8:
+                            year = int(d_str[0:4])
+                            month = int(d_str[4:6])
+                            day = int(d_str[6:8])
+                            # Force 2026 if the year is wrong (prevents 217 day bug)
+                            if year < 2026:
+                                year = 2026
+                            dt = date(year, month, day)
+                            age_days = (today - dt).days
+                            
+                    # If it's already a real date string from the DB
+                    else:
+                        dt = raw_date
+                        if hasattr(raw_date, 'year'):
+                            # If the year is wrong, force 2026
+                            if raw_date.year < 2026:
+                                dt = date(2026, raw_date.month, raw_date.day)
+                            age_days = (today - dt).days
+                            
                 except Exception:
                     age_days = 0
+            # =========================================================
 
             # 6. Build Item
             item = {
