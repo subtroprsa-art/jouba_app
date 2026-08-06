@@ -7,7 +7,7 @@ import pandas as pd
 from flask import Flask, request, jsonify, render_template, redirect, url_for, session
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from datetime import datetime, date
+from datetime import date
 
 # Google API imports
 from google.oauth2 import service_account
@@ -158,7 +158,7 @@ def get_inventory(inventory_type):
             if sm not in inventory:
                 inventory[sm] = []
 
-            # 2. Determine Farmer Name (FIXED to handle uppercase PRODUCER)
+            # 2. Determine Farmer Name
             farmer_name = row.get('producer') or row.get('PRODUCER') or row.get('prod') or row.get('farmer_name') or "Unknown Producer"
 
             # 3. Determine Qty
@@ -169,19 +169,13 @@ def get_inventory(inventory_type):
             # 4. Determine Pack
             pack = row.get('pack') or row.get('container') or ""
 
-            # 5. Parse Date safely
+            # 5. Calculate Age directly from date object (No string parsing)
             raw_date = row.get('date_received') or row.get('dn_date')
             age_days = 0
             if raw_date:
                 try:
-                    d_str = str(raw_date).strip()
-                    if d_str.isdigit() and len(d_str) == 8:
-                        dt = datetime.strptime(d_str, '%Y%m%d').date()
-                    elif '-' in d_str and d_str.replace('-', '').isdigit():
-                        dt = datetime.strptime(d_str, '%Y-%m-%d').date()
-                    else:
-                        dt = datetime.strptime(d_str, '%d-%b-%y').date()
-                    age_days = (today - dt).days
+                    # raw_date is already a Python date object from PostgreSQL
+                    age_days = (today - raw_date).days
                 except Exception:
                     age_days = 0
 
