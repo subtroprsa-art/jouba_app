@@ -132,8 +132,8 @@ def get_inventory(inventory_type):
         query = f"""
             SELECT *
             FROM {table}
-            WHERE FLR > 0 OR qty > 0
-            ORDER BY DATE DESC
+            WHERE flr > 0 OR qty > 0
+            ORDER BY date_received DESC
         """
         cursor.execute(query)
         rows = cursor.fetchall()
@@ -159,29 +159,27 @@ def get_inventory(inventory_type):
                 inventory[sm] = []
 
             # 2. Determine Farmer Name - EXACTLY from your Excel
-            farmer_name = row.get('PRODUCER') or "Unknown Producer"
+            farmer_name = row.get('producer') or row.get('PRODUCER') or "Unknown Producer"
 
-            # 3. Determine Qty - FLR is your stock
-            qty = row.get('FLR') or 0
+            # 3. Determine Qty - FLR is your actual stock
+            qty = row.get('flr') or 0
             if qty == 0:
                 continue
 
             # 4. Determine Pack Weight
-            pack = row.get('packing') or ""
+            pack = row.get('packing') or row.get('pack') or ""
 
             # 5. BULLETPROOF DATE CALCULATION
-            raw_date = row.get('DATE')
+            raw_date = row.get('date_received')
             age_days = 0
             
             if raw_date:
                 try:
-                    if isinstance(raw_date, str) and ':' in raw_date:
-                        # Parse Excel timestamp string like "2026-07-28 00:00:00"
+                    if isinstance(raw_date, str):
                         dt = datetime.strptime(raw_date.split(' ')[0], '%Y-%m-%d').date()
                     else:
                         dt = raw_date
                     
-                    # Force 2026 if year is wrong
                     if hasattr(dt, 'year') and dt.year < 2026:
                         dt = date(2026, dt.month, dt.day)
                     age_days = (today - dt).days
@@ -192,15 +190,12 @@ def get_inventory(inventory_type):
             item = {
                 "salesman": sm,
                 "farmer_name": farmer_name,
-                "commodity": row.get('commodty', ''),
-                "variety": row.get('variety', ''),
-                "size": row.get('size', ''),
+                "commodity": row.get('commodty') or row.get('commodity') or '',
+                "variety": row.get('variety') or '',
+                "size": row.get('size') or '',
                 "pack_weight": pack,
                 "qty": int(qty) if qty else 0,
-                "age_days": age_days,
-                # These are hidden from dashboard but kept for reference
-                "class": row.get('class', ''),
-                "count": row.get('count', '')
+                "age_days": age_days
             }
             inventory[sm].append(item)
 
@@ -230,7 +225,6 @@ def handle_upload(table_name):
         if file.filename == '':
             return jsonify({"success": False, "error": "No selected file"}), 400
 
-        # Read as Excel or CSV
         if file.filename.endswith('.xlsx'):
             df = pd.read_excel(file)
         else:
@@ -245,13 +239,11 @@ def handle_upload(table_name):
         inserted_count = 0
         for _, row in df.iterrows():
             if table_name == "stock_records":
-                # Use the Excel column names
                 producer = str(row.get('PRODUCER', '')).strip() if pd.notna(row.get('PRODUCER')) else ''
                 grn = str(row.get('GRN NO', '')).strip() if pd.notna(row.get('GRN NO')) else ''
                 commodity = str(row.get('COMMODTY', '')).strip() if pd.notna(row.get('COMMODTY')) else ''
                 packing = str(row.get('PACKING', '')).strip() if pd.notna(row.get('PACKING')) else ''
                 variety = str(row.get('VARIETY', '')).strip() if pd.notna(row.get('VARIETY')) else ''
-                class_col = str(row.get('CLASS', '')).strip() if pd.notna(row.get('CLASS')) else ''
                 size = str(row.get('SIZE', '')).strip() if pd.notna(row.get('SIZE')) else ''
                 count = str(row.get('COUNT', '')).strip() if pd.notna(row.get('COUNT')) else ''
                 flr = int(row.get('FLR', 0)) if pd.notna(row.get('FLR')) else 0
@@ -264,8 +256,8 @@ def handle_upload(table_name):
 
                 cursor.execute(f"""
                     INSERT INTO {table_name} 
-                    (salesman, grn, producer, commodity, packing, variety, class, size, count, flr, date)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    (salesman, grn, producer, commodity, packing, variety, size, count, flr, date_received)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """, (
                     salesman,
                     grn,
@@ -273,7 +265,6 @@ def handle_upload(table_name):
                     commodity,
                     packing,
                     variety,
-                    class_col,
                     size,
                     count,
                     flr,
