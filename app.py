@@ -169,13 +169,13 @@ def get_inventory(inventory_type):
             # 4. Determine Pack
             pack = row.get('pack') or row.get('container') or ""
 
-            # 5. Calculate Age directly from date object (No string parsing)
-            raw_date = row.get('date_received') or row.get('dn_date')
+            # 5. Calculate Age from a real Date object (handled by PostgreSQL)
+            raw_date = row.get('date_received')
             age_days = 0
             if raw_date:
                 try:
-                    # raw_date is already a Python date object from PostgreSQL
-                    age_days = (today - raw_date).days
+                    # raw_date is already a Python date object
+                    age_days = (date.today() - raw_date).days
                 except Exception:
                     age_days = 0
 
