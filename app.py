@@ -132,8 +132,8 @@ def get_inventory(inventory_type):
         query = f"""
             SELECT *
             FROM {table}
-            WHERE qty_floor > 0 OR qty > 0
-            ORDER BY date_received DESC
+            WHERE FLR > 0 OR qty > 0
+            ORDER BY DATE DESC
         """
         cursor.execute(query)
         rows = cursor.fetchall()
@@ -158,62 +158,49 @@ def get_inventory(inventory_type):
             if sm not in inventory:
                 inventory[sm] = []
 
-            # 2. Determine Farmer Name
-            farmer_name = row.get('producer') or row.get('PRODUCER') or row.get('prod') or row.get('farmer_name') or "Unknown Producer"
+            # 2. Determine Farmer Name - EXACTLY from your Excel
+            farmer_name = row.get('PRODUCER') or "Unknown Producer"
 
-            # 3. Determine Qty
-            qty = row.get('qty_floor') or row.get('qty') or 0
+            # 3. Determine Qty - FLR is your stock
+            qty = row.get('FLR') or 0
             if qty == 0:
                 continue
 
-            # 4. Determine Pack
-            pack = row.get('pack') or row.get('container') or ""
+            # 4. Determine Pack Weight
+            pack = row.get('packing') or ""
 
-            # =========================================================
             # 5. BULLETPROOF DATE CALCULATION
-            # =========================================================
-            raw_date = row.get('date_received')
+            raw_date = row.get('DATE')
             age_days = 0
             
-            # Force the date into a Python date object manually
             if raw_date:
                 try:
-                    # If it's an integer like 20260728
-                    if isinstance(raw_date, int) or (isinstance(raw_date, str) and raw_date.isdigit()):
-                        d_str = str(raw_date).strip()
-                        if len(d_str) == 8:
-                            year = int(d_str[0:4])
-                            month = int(d_str[4:6])
-                            day = int(d_str[6:8])
-                            # Force 2026 if the year is wrong (prevents 217 day bug)
-                            if year < 2026:
-                                year = 2026
-                            dt = date(year, month, day)
-                            age_days = (today - dt).days
-                            
-                    # If it's already a real date string from the DB
+                    if isinstance(raw_date, str) and ':' in raw_date:
+                        # Parse Excel timestamp string like "2026-07-28 00:00:00"
+                        dt = datetime.strptime(raw_date.split(' ')[0], '%Y-%m-%d').date()
                     else:
                         dt = raw_date
-                        if hasattr(raw_date, 'year'):
-                            # If the year is wrong, force 2026
-                            if raw_date.year < 2026:
-                                dt = date(2026, raw_date.month, raw_date.day)
-                            age_days = (today - dt).days
-                            
+                    
+                    # Force 2026 if year is wrong
+                    if hasattr(dt, 'year') and dt.year < 2026:
+                        dt = date(2026, dt.month, dt.day)
+                    age_days = (today - dt).days
                 except Exception:
                     age_days = 0
-            # =========================================================
 
-            # 6. Build Item
+            # 6. Build Item - Only showing what you want
             item = {
                 "salesman": sm,
                 "farmer_name": farmer_name,
-                "commodity": row.get('commodity', ''),
+                "commodity": row.get('commodty', ''),
                 "variety": row.get('variety', ''),
                 "size": row.get('size', ''),
                 "pack_weight": pack,
                 "qty": int(qty) if qty else 0,
-                "age_days": age_days
+                "age_days": age_days,
+                # These are hidden from dashboard but kept for reference
+                "class": row.get('class', ''),
+                "count": row.get('count', '')
             }
             inventory[sm].append(item)
 
@@ -224,126 +211,14 @@ def get_inventory(inventory_type):
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/api/sales-pipeline", methods=["GET"])
-def get_sales_pipeline():
-    if not session.get("user"):
-        return jsonify({"error": "Unauthorized"}), 401
-
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            SELECT 
-                bh.buyer AS buyer, 
-                SUM(bh.total) as total_spent, 
-                COUNT(*) as total_units, 
-                bp.phone
-            FROM buyer_history bh
-            LEFT JOIN buyer_phones bp ON bh.buyer = bp.buyer_name
-            GROUP BY bh.buyer, bp.phone
-            ORDER BY total_spent DESC
-            LIMIT 20
-        """)
-        buyers = cursor.fetchall()
-
-        cursor.execute("""
-            SELECT DISTINCT commodity FROM stock_records WHERE qty_floor > 0
-            UNION
-            SELECT DISTINCT commodity FROM floor_records WHERE qty > 0
-        """)
-        commodities_raw = cursor.fetchall()
-        commodities = [row['commodity'] for row in commodities_raw if row['commodity']]
-
-        cursor.close()
-        conn.close()
-
-        pipeline = []
-        for b in buyers:
-            pipeline.append({
-                "buyer": b['buyer'],
-                "total_spent": float(b['total_spent']) if b['total_spent'] else 0,
-                "total_units": int(b['total_units']) if b['total_units'] else 0,
-                "phone": b['phone'] or "",
-                "commodities": commodities,
-                "contacted_by": None
-            })
-
-        return jsonify({"pipeline": pipeline}), 200
-
-    except Exception as e:
-        logger.exception("Error fetching pipeline")
-        return jsonify({"pipeline": [], "error": str(e)}), 500
-
-
-@app.route("/api/buyer-details/<buyer_name>", methods=["GET"])
-def get_buyer_details(buyer_name):
-    if not session.get("user"):
-        return jsonify({"error": "Unauthorized"}), 401
-
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            SELECT commodity, pack, SUM(qty) as total_qty
-            FROM buyer_history
-            WHERE buyer = %s
-            GROUP BY commodity, pack
-            ORDER BY total_qty DESC
-            LIMIT 10
-        """, (buyer_name,))
-        matches = cursor.fetchall()
-        
-        cursor.close()
-        conn.close()
-
-        return jsonify([dict(m) for m in matches]), 200
-
-    except Exception as e:
-        logger.exception("Error fetching buyer details")
-        return jsonify([]), 200
-
-
-@app.route("/api/mark-contacted", methods=["POST"])
-def mark_contacted():
-    if not session.get("user"):
-        return jsonify({"error": "Unauthorized"}), 401
-
-    data = request.get_json()
-    buyer = data.get("buyer")
-    user = session.get("user_name")
-
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            INSERT INTO buyer_contact_log (buyer, contacted_by, contacted_at)
-            VALUES (%s, %s, NOW())
-        """, (buyer, user))
-        
-        conn.commit()
-        cursor.close()
-        conn.close()
-        
-        return jsonify({"success": True}), 200
-
-    except Exception as e:
-        logger.exception("Error marking contacted")
-        return jsonify({"success": False, "error": str(e)}), 500
-
-
-# ===================== UPLOAD ENDPOINTS FOR upload_all.py =====================
+# ===================== UPLOAD ENDPOINTS =====================
 
 @app.route("/upload-stock", methods=["POST"])
 def upload_stock():
-    """Accepts CSV uploads from upload_all.py and inserts into stock_records"""
     return handle_upload("stock_records")
 
 @app.route("/upload-floor", methods=["POST"])
 def upload_floor():
-    """Accepts CSV uploads from upload_all.py and inserts into floor_records"""
     return handle_upload("floor_records")
 
 def handle_upload(table_name):
@@ -355,8 +230,12 @@ def handle_upload(table_name):
         if file.filename == '':
             return jsonify({"success": False, "error": "No selected file"}), 400
 
-        stream = io.StringIO(file.stream.read().decode("UTF8"), newline=None)
-        df = pd.read_csv(stream, delimiter='\t')
+        # Read as Excel or CSV
+        if file.filename.endswith('.xlsx'):
+            df = pd.read_excel(file)
+        else:
+            stream = io.StringIO(file.stream.read().decode("UTF8"), newline=None)
+            df = pd.read_csv(stream, delimiter='\t')
 
         df.columns = [str(c).strip().upper() for c in df.columns]
 
@@ -365,49 +244,42 @@ def handle_upload(table_name):
 
         inserted_count = 0
         for _, row in df.iterrows():
-            grn = str(row.get('GRN_NO', '')).strip()
-            if not grn or grn.lower() == 'nan':
-                continue
+            if table_name == "stock_records":
+                # Use the Excel column names
+                producer = str(row.get('PRODUCER', '')).strip() if pd.notna(row.get('PRODUCER')) else ''
+                grn = str(row.get('GRN NO', '')).strip() if pd.notna(row.get('GRN NO')) else ''
+                commodity = str(row.get('COMMODTY', '')).strip() if pd.notna(row.get('COMMODTY')) else ''
+                packing = str(row.get('PACKING', '')).strip() if pd.notna(row.get('PACKING')) else ''
+                variety = str(row.get('VARIETY', '')).strip() if pd.notna(row.get('VARIETY')) else ''
+                class_col = str(row.get('CLASS', '')).strip() if pd.notna(row.get('CLASS')) else ''
+                size = str(row.get('SIZE', '')).strip() if pd.notna(row.get('SIZE')) else ''
+                count = str(row.get('COUNT', '')).strip() if pd.notna(row.get('COUNT')) else ''
+                flr = int(row.get('FLR', 0)) if pd.notna(row.get('FLR')) else 0
+                date_received = row.get('DATE') if pd.notna(row.get('DATE')) else None
 
-            salesman = parse_salesman(file.filename)
-            producer = str(row.get('PRODUCER', '')).strip() if pd.notna(row.get('PRODUCER')) else ''
-            
-            comm_raw = str(row.get('COMMODITY', '')) if pd.notna(row.get('COMMODITY')) else ''
-            comm_parts = [p.strip() for p in comm_raw.split(',')] if comm_raw else []
-            
-            commodity = comm_parts[0] if len(comm_parts) > 0 else comm_raw
-            pack = comm_parts[1] if len(comm_parts) > 1 else str(row.get('PACK', ''))
-            variety = comm_parts[2] if len(comm_parts) > 2 else str(row.get('VARIETY', ''))
-            grade = comm_parts[3] if len(comm_parts) > 3 else str(row.get('GRADE', '1'))
-            size = comm_parts[4] if len(comm_parts) > 4 else str(row.get('SIZE', '*'))
-            count = comm_parts[5] if len(comm_parts) > 5 else str(row.get('COUNT', '*'))
+                if flr == 0 or not grn:
+                    continue
 
-            def parse_int(val):
-                try:
-                    return int(float(val)) if pd.notna(val) and str(val).strip() != '' else 0
-                except (ValueError, TypeError):
-                    return 0
+                salesman = parse_salesman(file.filename)
 
-            qty_floor = parse_int(row.get('QTY_FLOOR', 0))
-
-            cursor.execute(f"""
-                INSERT INTO {table_name} 
-                (salesman, grn, producer, commodity, pack, variety, grade, size, count, qty, qty_floor, intake_date)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_DATE)
-            """, (
-                salesman,
-                grn,
-                producer,
-                commodity,
-                pack,
-                variety,
-                grade,
-                size,
-                count,
-                qty_floor,
-                qty_floor,
-            ))
-            inserted_count += 1
+                cursor.execute(f"""
+                    INSERT INTO {table_name} 
+                    (salesman, grn, producer, commodity, packing, variety, class, size, count, flr, date)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, (
+                    salesman,
+                    grn,
+                    producer,
+                    commodity,
+                    packing,
+                    variety,
+                    class_col,
+                    size,
+                    count,
+                    flr,
+                    date_received
+                ))
+                inserted_count += 1
 
         conn.commit()
         cursor.close()
@@ -425,159 +297,6 @@ def handle_upload(table_name):
 @app.route("/api/health", methods=["GET"])
 def health_check():
     return jsonify({"success": True, "status": "healthy", "service": "jdw-sync"}), 200
-
-@app.route("/api/upload-inventory", methods=["POST"])
-def upload_inventory():
-    try:
-        data = request.get_json(silent=True) or {}
-        token = data.get("token") or request.headers.get("X-Sync-Token") or request.args.get("token")
-        if token != AUTH_TOKEN:
-            return jsonify({"success": False, "error": "Unauthorized"}), 401
-
-        target_table = data.get("target_table", "unknown")
-        salesman = data.get("salesman", "Unassigned")
-        records = data.get("records", [])
-
-        if not records:
-            return jsonify({"success": False, "message": "No records received"}), 400
-
-        total_items = 0
-        total_bags = 0
-        processed_records = []
-
-        for index, record in enumerate(records, start=1):
-            qty = int(record.get("qty", 0))
-            pack = str(record.get("pack", "")).lower()
-            total_items += qty
-            if "15kg" in pack or "20kg" in pack or "bag" in pack:
-                total_bags += qty
-            processed_records.append({
-                "seq_nr": record.get("seq_nr", index),
-                "farmer": record.get("farmer", ""),
-                "commodity": record.get("commodity", ""),
-                "variety": record.get("variety", ""),
-                "size": record.get("size", ""),
-                "pack": record.get("pack", ""),
-                "qty": qty,
-                "salesman": salesman,
-                "target_table": target_table
-            })
-
-        return jsonify({
-            "success": True,
-            "status": "success",
-            "table": target_table,
-            "salesman": salesman,
-            "processed_files": 1,
-            "total_items": total_items,
-            "total_bags": total_bags,
-            "records": processed_records
-        }), 200
-
-    except Exception as e:
-        logger.exception("Error processing uploaded inventory")
-        return jsonify({"success": False, "error": str(e)}), 500
-
-@app.route("/api/sync-drive", methods=["GET", "POST"])
-def sync_drive():
-    token = request.args.get("token") or request.headers.get("X-Sync-Token")
-    if token != AUTH_TOKEN:
-        return jsonify({"success": False, "error": "Unauthorized"}), 401
-
-    service = get_drive_service()
-    if not service:
-        return jsonify({
-            "success": False,
-            "error": "Google Drive authentication failed. Check GOOGLE_CREDENTIALS_JSON in Render environment."
-        }), 500
-
-    debug_info = {}
-    folders_to_check = {
-        "floor_raw": FOLDER_FLOOR_BALANCE,
-        "stock_raw": FOLDER_STOCK_SCAN
-    }
-    total_files_found = 0
-    all_records = []
-
-    for folder_name, folder_id in folders_to_check.items():
-        try:
-            query = f"'{folder_id}' in parents and trashed = false"
-            results = service.files().list(q=query, fields="files(id, name, mimeType)").execute()
-            raw_files = results.get("files", [])
-            total_files_found += len(raw_files)
-
-            for f in raw_files:
-                file_id = f["id"]
-                file_name = f["name"]
-                mime_type = f.get("mimeType", "")
-
-                if mime_type == "application/vnd.google-apps.spreadsheet":
-                    request_media = service.files().export_media(fileId=file_id, mimeType="text/csv")
-                elif file_name.lower().endswith(".csv") or mime_type == "text/csv":
-                    request_media = service.files().get_media(fileId=file_id)
-                else:
-                    continue
-
-                fh = io.BytesIO()
-                downloader = MediaIoBaseDownload(fh, request_media)
-                done = False
-                while not done:
-                    _, done = downloader.next_chunk()
-
-                content = fh.getvalue().decode("utf-8", errors="ignore")
-                lines = content.splitlines()
-                if len(lines) <= 1:
-                    continue
-
-                reader = csv.reader(lines, delimiter='\t')
-                headers = [h.strip().lower() for h in next(reader, [])]
-
-                def col_index(name):
-                    return headers.index(name) if name in headers else None
-
-                if folder_name == "floor_raw":
-                    qty_idx = col_index("qty")
-                    pack_idx = col_index("container")
-                else:
-                    qty_idx = col_index("qty_floor")
-                    pack_idx = col_index("pack")
-
-                def get_val(row, i):
-                    return row[i].strip() if i is not None and i < len(row) else ""
-
-                for idx, row in enumerate(reader, start=1):
-                    if not row or not any(row):
-                        continue
-                    qty_val = get_val(row, qty_idx)
-                    qty = int(qty_val) if qty_val.isdigit() else 0
-                    pack = get_val(row, pack_idx)
-
-                    all_records.append({
-                        "file_name": file_name,
-                        "salesman": parse_salesman(file_name),
-                        "folder": folder_name,
-                        "seq_nr": idx,
-                        "qty": qty,
-                        "pack": pack
-                    })
-
-            debug_info[folder_name] = {
-                "folder_id": folder_id,
-                "file_count": len(raw_files),
-                "files": [{"id": f["id"], "name": f["name"], "mimeType": f.get("mimeType", "")} for f in raw_files]
-            }
-
-        except Exception as e:
-            logger.exception(f"Error checking folder {folder_name}")
-            debug_info[folder_name] = {"folder_id": folder_id, "error": str(e)}
-
-    return jsonify({
-        "success": True,
-        "total_files_found": total_files_found,
-        "processed_records_count": len(all_records),
-        "debug_folders": debug_info,
-        "records": all_records
-    }), 200
 
 
 def parse_salesman(filename: str) -> str:
