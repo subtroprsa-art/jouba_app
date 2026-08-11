@@ -72,7 +72,7 @@
       }
     }
 
-    function renderSalesmenTabs() {
+       function renderSalesmenTabs() {
       const container = document.getElementById('salesmen-tabs');
       container.innerHTML = '';
       
@@ -86,7 +86,16 @@
       salesmen.forEach((sm, index) => {
         const btn = document.createElement('button');
         btn.className = `tab-btn ${index === 0 ? 'active' : ''}`;
-        btn.innerText = `👤 ${sm} (${fullInventoryData[sm].length})`;
+        
+        // === NEW LOGIC: Sum the qty for this salesman ===
+        const items = fullInventoryData[sm];
+        let totalStock = 0;
+        items.forEach(item => {
+          totalStock += item.qty;
+        });
+        // =================================================
+
+        btn.innerText = `👤 ${sm} (${totalStock})`;   // <--- SHOWS TOTAL STOCK, NOT ROWS
         btn.onclick = () => selectSalesman(sm, btn);
         container.appendChild(btn);
       });
