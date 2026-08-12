@@ -167,17 +167,18 @@ def get_inventory(inventory_type):
             if sm not in inventory:
                 inventory[sm] = []
 
-            # 2. Normalize column names (CRITICAL FIX FOR FLOOR)
+            # 2. Normalize columns for Floor records (MATCHING YOUR ACTUAL DATABASE COLUMNS)
             if inventory_type == "floor":
-                row['commodity'] = row.get('commodty') or row.get('COMMODTY') or row.get('commodity') or ''
-                row['farmer_name'] = row.get('PRODUCER') or row.get('producer') or row.get('farmer_name') or 'Unknown Farmer'
-                row['pack_weight'] = row.get('PACK') or row.get('pack') or row.get('packing') or row.get('PACKING') or ''
-                row['size'] = row.get('size') or row.get('SIZE') or ''
-                row['variety'] = row.get('variety') or row.get('VARIETY') or ''
-                row['seq_nr'] = row.get('seq_nr') or row.get('SEQ') or 0
+                # Your database columns are: seq_nr, producer, pack, commodity, variety, size, count, grade, qty, date_received
+                row['seq_nr'] = row.get('seq_nr') or 0
+                row['farmer_name'] = row.get('producer') or 'Unknown Farmer'
+                row['pack_weight'] = row.get('pack') or ''
+                row['commodity'] = row.get('commodity') or ''
+                row['variety'] = row.get('variety') or ''
+                row['size'] = row.get('size') or ''
             else:
-                # Stock already uses the correct keys
-                row['farmer_name'] = row.get('producer') or row.get('PRODUCER') or row.get('farmer_name') or ''
+                # Stock columns
+                row['farmer_name'] = row.get('producer') or row.get('PRODUCER') or 'Unknown Farmer'
 
             # 3. Determine Qty
             if inventory_type == "stock":
@@ -188,16 +189,15 @@ def get_inventory(inventory_type):
             if qty == 0:
                 continue
 
-            # 4. SEQ (Only for floor)
-            seq_nr = row.get('seq_nr') or 0
-
-            # 5. Date Calculation
+            # 4. Date Calculation (Fixed for both types)
             raw_date = row.get('date_received')
             age_days = 0
             if raw_date:
                 try:
+                    # If it's a string, parse it. If it's already a date object, use it directly.
                     if isinstance(raw_date, str):
-                        dt = datetime.strptime(raw_date.split(' ')[0], '%Y-%m-%d').date()
+                        # Handle standard date formats
+                        dt = datetime.strptime(raw_date[:10], '%Y-%m-%d').date()
                     else:
                         dt = raw_date
                     
@@ -207,7 +207,7 @@ def get_inventory(inventory_type):
                 except Exception:
                     age_days = 0
 
-            # 6. Build Item
+            # 5. Build Item
             item = {
                 "salesman": sm,
                 "farmer_name": row['farmer_name'],
@@ -219,9 +219,9 @@ def get_inventory(inventory_type):
                 "age_days": age_days
             }
             
-            # 7. Add SEQ to the item if it's floor
+            # 6. Add SEQ to the item if it's floor
             if inventory_type == "floor":
-                item["seq_nr"] = int(seq_nr) if seq_nr else 0
+                item["seq_nr"] = int(row['seq_nr']) if row['seq_nr'] else 0
                 
             inventory[sm].append(item)
 
