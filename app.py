@@ -169,14 +169,14 @@ def get_inventory(inventory_type):
 
             # 2. Normalize column names (CRITICAL FIX FOR FLOOR)
             if inventory_type == "floor":
-                # The database uses CSV-style names; the frontend expects these keys
                 row['commodity'] = row.get('commodty') or row.get('COMMODTY') or row.get('commodity') or ''
-                row['farmer_name'] = row.get('producer') or row.get('PRODUCER') or row.get('farmer_name') or ''
-                row['pack_weight'] = row.get('pack') or row.get('PACK') or row.get('packing') or row.get('PACKING') or ''
+                row['farmer_name'] = row.get('PRODUCER') or row.get('producer') or row.get('farmer_name') or 'Unknown Farmer'
+                row['pack_weight'] = row.get('PACK') or row.get('pack') or row.get('packing') or row.get('PACKING') or ''
                 row['size'] = row.get('size') or row.get('SIZE') or ''
                 row['variety'] = row.get('variety') or row.get('VARIETY') or ''
+                row['seq_nr'] = row.get('seq_nr') or row.get('SEQ') or 0
             else:
-                # Stock already uses the correct keys from the CSV parser
+                # Stock already uses the correct keys
                 row['farmer_name'] = row.get('producer') or row.get('PRODUCER') or row.get('farmer_name') or ''
 
             # 3. Determine Qty
