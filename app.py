@@ -167,30 +167,29 @@ def get_inventory(inventory_type):
             if sm not in inventory:
                 inventory[sm] = []
 
-            # 2. Normalize columns for Floor records (SUPPORTING ALL CAPS DATABASE COLUMNS)
+            # 2. Normalize columns for Floor records (EXACTLY MATCHING YOUR NEON DATABASE)
             if inventory_type == "floor":
-                # Your database stores columns in ALL CAPS. Try both.
-                row['seq_nr'] = row.get('SEQ_NR') or row.get('seq_nr') or 0
-                row['farmer_name'] = row.get('PRODUCER') or row.get('producer') or 'Unknown Farmer'
-                row['pack_weight'] = row.get('PACK') or row.get('pack') or ''
-                row['commodity'] = row.get('COMMODITY') or row.get('commodity') or ''
-                row['variety'] = row.get('VARIETY') or row.get('variety') or ''
-                row['size'] = row.get('SIZE') or row.get('size') or ''
+                row['seq_nr'] = row.get('seq_nr') or 0
+                row['farmer_name'] = row.get('producer') or 'Unknown Farmer'
+                row['pack_weight'] = row.get('pack') or ''
+                row['commodity'] = row.get('commodity') or ''
+                row['variety'] = row.get('variety') or ''
+                row['size'] = row.get('size') or ''
             else:
                 # Stock columns
-                row['farmer_name'] = row.get('PRODUCER') or row.get('producer') or 'Unknown Farmer'
+                row['farmer_name'] = row.get('producer') or 'Unknown Farmer'
 
             # 3. Determine Qty
             if inventory_type == "stock":
                 qty = row.get('flr') or 0
             else:
-                qty = row.get('QTY') or row.get('qty') or 0
+                qty = row.get('qty') or 0
 
             if qty == 0:
                 continue
 
-            # 4. Date Calculation (Fixed for both types)
-            raw_date = row.get('DATE_RECEIVED') or row.get('date_received')
+            # 4. Date Calculation
+            raw_date = row.get('date_received')
             age_days = 0
             if raw_date:
                 try:
