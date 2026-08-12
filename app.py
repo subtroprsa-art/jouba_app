@@ -133,14 +133,14 @@ def get_inventory(inventory_type):
             query = f"""
                 SELECT *
                 FROM {table}
-                WHERE flr > 0
+                WHERE flr > 0 OR qty > 0
                 ORDER BY date_received DESC
             """
         else:
             query = f"""
                 SELECT *
                 FROM {table}
-                WHERE qty > 0
+                WHERE qty > 0 OR qty_floor > 0
                 ORDER BY date_received DESC
             """
             
@@ -167,33 +167,59 @@ def get_inventory(inventory_type):
             if sm not in inventory:
                 inventory[sm] = []
 
-            # 2. Normalize columns for Floor records (EXACTLY MATCHING YOUR NEON DATABASE)
+            # 2. Normalize columns for Floor records
             if inventory_type == "floor":
-                row['seq_nr'] = row.get('seq_nr') or 0
-                row['farmer_name'] = row.get('producer') or 'Unknown Farmer'
-                row['pack_weight'] = row.get('pack') or ''
-                row['commodity'] = row.get('commodity') or ''
-                row['variety'] = row.get('variety') or ''
-                row['size'] = row.get('size') or ''
+                # SEQ: try all possible names
+                seq_val = row.get('seq_nr') or row.get('seq_no') or 0
+                if isinstance(seq_val, str) and seq_val.isdigit():
+                    seq_val = int(seq_val)
+                
+                # Farmer name: try all possible names
+                farmer_name = row.get('producer') or row.get('PRODUCER') or row.get('farmer_name') or 'Unknown Farmer'
+                
+                # Commodity: try all possible names
+                commodity = row.get('commodity') or row.get('commodty') or row.get('COMMODITY') or ''
+                
+                # Pack: try all possible names
+                pack_weight = row.get('pack') or row.get('pack_weight') or row.get('PACK') or row.get('PACKING') or ''
+                
+                # Variety and Size
+                variety = row.get('variety') or row.get('VARIETY') or ''
+                size = row.get('size') or row.get('SIZE') or ''
+                
+                # Qty: try all possible names
+                qty = row.get('qty') or row.get('qty_floor') or row.get('QTY') or 0
+                if isinstance(qty, str) and qty.isdigit():
+                    qty = int(qty)
+                else:
+                    try:
+                        qty = int(qty) if qty else 0
+                    except:
+                        qty = 0
+
+                # Date: try all possible names
+                raw_date = row.get('date_received') or row.get('intake_date') or row.get('DATE_RECEIVED')
             else:
                 # Stock columns
-                row['farmer_name'] = row.get('producer') or 'Unknown Farmer'
-
-            # 3. Determine Qty
-            if inventory_type == "stock":
-                qty = row.get('flr') or 0
-            else:
-                qty = row.get('qty') or 0
+                farmer_name = row.get('producer') or row.get('PRODUCER') or row.get('farmer_name') or 'Unknown Farmer'
+                commodity = row.get('commodity') or row.get('commodty') or row.get('COMMODITY') or ''
+                pack_weight = row.get('pack') or row.get('pack_weight') or row.get('PACK') or row.get('PACKING') or ''
+                variety = row.get('variety') or row.get('VARIETY') or ''
+                size = row.get('size') or row.get('SIZE') or ''
+                qty = row.get('flr') or row.get('qty') or row.get('QTY_FLOOR') or 0
+                raw_date = row.get('date_received') or row.get('DATE_RECEIVED')
 
             if qty == 0:
                 continue
 
-            # 4. Date Calculation
-            raw_date = row.get('date_received')
+            # Date Calculation
             age_days = 0
             if raw_date:
                 try:
                     if isinstance(raw_date, str):
+                        # Try to extract date from string
+                        if ' ' in raw_date:
+                            raw_date = raw_date.split(' ')[0]
                         dt = datetime.strptime(raw_date[:10], '%Y-%m-%d').date()
                     else:
                         dt = raw_date
@@ -204,21 +230,21 @@ def get_inventory(inventory_type):
                 except Exception:
                     age_days = 0
 
-            # 5. Build Item
+            # Build Item
             item = {
                 "salesman": sm,
-                "farmer_name": row['farmer_name'],
-                "commodity": row['commodity'],
-                "variety": row['variety'],
-                "size": row['size'],
-                "pack_weight": row['pack_weight'],
+                "farmer_name": farmer_name,
+                "commodity": commodity,
+                "variety": variety,
+                "size": size,
+                "pack_weight": pack_weight,
                 "qty": int(qty) if qty else 0,
                 "age_days": age_days
             }
             
-            # 6. Add SEQ to the item if it's floor
+            # Add SEQ to the item if it's floor
             if inventory_type == "floor":
-                item["seq_nr"] = int(row['seq_nr']) if row['seq_nr'] else 0
+                item["seq_nr"] = int(seq_val) if seq_val else 0
                 
             inventory[sm].append(item)
 
