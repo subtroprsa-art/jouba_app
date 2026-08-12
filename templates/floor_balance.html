@@ -2,13 +2,48 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Stock Inventory - JDW Fresh</title>
+  <title>Floor Balance - JDW Fresh</title>
   <style>
     body { font-family: sans-serif; background: #f8fafc; padding: 24px; margin: 0; color: #1e293b; }
     .nav { margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
     .btn-back { background: #e2e8f0; color: #334155; padding: 8px 16px; text-decoration: none; border-radius: 6px; font-weight: bold; }
     
     .search-box { width: 100%; padding: 12px 16px; font-size: 15px; border: 1px solid #cbd5e1; border-radius: 8px; margin-bottom: 20px; box-sizing: border-box; }
+    
+    /* Filter Row Layout */
+    .filter-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 20px;
+      align-items: center;
+    }
+    .filter-group {
+      display: flex;
+      flex-direction: column;
+      flex: 1 1 150px;
+      min-width: 140px;
+    }
+    .filter-group label {
+      font-size: 11px;
+      font-weight: bold;
+      color: #64748b;
+      margin-bottom: 4px;
+      text-transform: uppercase;
+    }
+    .filter-dropdown {
+      padding: 10px 14px;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      background: white;
+      font-size: 14px;
+      width: 100%;
+    }
+    .filter-dropdown:disabled {
+      background: #f1f5f9;
+      color: #94a3b8;
+      cursor: not-allowed;
+    }
     
     /* Salesman Filter Tabs with Highlight */
     .salesmen-tabs { display: flex; gap: 10px; overflow-x: auto; margin-bottom: 20px; border-bottom: 2px solid #e2e8f0; padding-bottom: 12px; }
@@ -27,17 +62,47 @@
 <body>
   <div class="nav">
     <a href="/dashboard" class="btn-back">⬅️ Back to Hub</a>
-    <h2>📦 Stock Inventory</h2>
+    <h2>🏬 Floor Balance</h2>
     <span style="font-weight: bold;">👤 {{ user_name }}</span>
   </div>
 
-  <input type="text" id="search-bar" class="search-box" placeholder="🔍 Multi-search by Farmer, Commodity, Variety, Size, Weight..." onkeyup="filterInventory()">
+  <input type="text" id="search-bar" class="search-box" placeholder="🔍 Search anything: Seq, Farmer, Commodity, Variety, Size, Pack, Qty, Age..." onkeyup="applyAllFilters()">
+
+  <!-- EXACT 4-LEVEL DROPDOWN HIERARCHY -->
+  <div class="filter-row">
+    <div class="filter-group">
+      <label>1. Commodity</label>
+      <select id="filter-commodity" class="filter-dropdown" onchange="applyAllFilters()">
+        <option value="">All Commodities</option>
+      </select>
+    </div>
+    <div class="filter-group">
+      <label>2. Farmer</label>
+      <select id="filter-farmer" class="filter-dropdown" onchange="applyAllFilters()">
+        <option value="">All Farmers</option>
+      </select>
+    </div>
+    <div class="filter-group">
+      <label>3. Packing</label>
+      <select id="filter-packing" class="filter-dropdown" onchange="applyAllFilters()">
+        <option value="">All Packing</option>
+      </select>
+    </div>
+    <div class="filter-group">
+      <label>4. Age Sorting</label>
+      <select id="filter-age" class="filter-dropdown" onchange="applyAllFilters()">
+        <option value="oldest">Oldest First</option>
+        <option value="newest">Newest First</option>
+      </select>
+    </div>
+  </div>
 
   <div id="salesmen-tabs" class="salesmen-tabs"></div>
 
   <table>
     <thead>
       <tr>
+        <th>Seq</th>
         <th>Farmer Name</th>
         <th>Commodity</th>
         <th>Variety</th>
@@ -48,18 +113,18 @@
       </tr>
     </thead>
     <tbody id="inventory-tbody">
-      <tr><td colspan="7">Loading stock...</td></tr>
+      <tr><td colspan="8">Loading floor balance...</td></tr>
     </tbody>
   </table>
 
   <script>
-    const invType = 'stock'; // Use 'floor' in floor_balance.html
+    const invType = 'floor'; 
     let fullInventoryData = {};
     let activeSalesman = null;
 
     async function loadInventory() {
       const tbody = document.getElementById('inventory-tbody');
-      tbody.innerHTML = '<tr><td colspan="7">Loading inventory data...</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8">Loading floor balance data...</td></tr>';
       
       try {
         const res = await fetch(`/api/inventory/${invType}`);
@@ -67,19 +132,20 @@
         fullInventoryData = data.inventory || {};
         
         renderSalesmenTabs();
+        populateDropdowns();
       } catch (err) {
-        tbody.innerHTML = '<tr><td colspan="7">Error loading inventory data.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8">Error loading floor balance data.</td></tr>';
       }
     }
 
-       function renderSalesmenTabs() {
+    function renderSalesmenTabs() {
       const container = document.getElementById('salesmen-tabs');
       container.innerHTML = '';
       
       const salesmen = Object.keys(fullInventoryData);
       if (salesmen.length === 0) {
-        container.innerHTML = '<em>No stock records found.</em>';
-        document.getElementById('inventory-tbody').innerHTML = '<tr><td colspan="7">No inventory available.</td></tr>';
+        container.innerHTML = '<em>No floor balance records found.</em>';
+        document.getElementById('inventory-tbody').innerHTML = '<tr><td colspan="8">No floor balance available.</td></tr>';
         return;
       }
 
@@ -87,15 +153,11 @@
         const btn = document.createElement('button');
         btn.className = `tab-btn ${index === 0 ? 'active' : ''}`;
         
-        // === NEW LOGIC: Sum the qty for this salesman ===
         const items = fullInventoryData[sm];
         let totalStock = 0;
-        items.forEach(item => {
-          totalStock += item.qty;
-        });
-        // =================================================
+        items.forEach(item => { totalStock += item.qty; });
 
-        btn.innerText = `👤 ${sm} (${totalStock})`;   // <--- SHOWS TOTAL STOCK, NOT ROWS
+        btn.innerText = `👤 ${sm} (${totalStock.toLocaleString()})`;
         btn.onclick = () => selectSalesman(sm, btn);
         container.appendChild(btn);
       });
@@ -108,26 +170,107 @@
       activeSalesman = sm;
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
       btnElement.classList.add('active');
+      
+      // Reset dropdowns when switching salesman
+      document.getElementById('filter-commodity').value = '';
+      document.getElementById('filter-farmer').value = '';
+      document.getElementById('filter-packing').value = '';
+      populateDropdowns();
+      renderTable();
+    }
+
+    // ==================== DYNAMIC DROPDOWN LOGIC ====================
+    function getCurrentItems() {
+      return fullInventoryData[activeSalesman] || [];
+    }
+
+    function populateDropdowns() {
+      const items = getCurrentItems();
+      const commodityEl = document.getElementById('filter-commodity');
+      const farmerEl = document.getElementById('filter-farmer');
+      const packingEl = document.getElementById('filter-packing');
+
+      // 1. Commodity dropdown
+      const commodities = [...new Set(items.map(i => i.commodity).filter(Boolean))].sort();
+      const currentComm = commodityEl.value;
+      commodityEl.innerHTML = '<option value="">All Commodities</option>' + 
+        commodities.map(c => `<option value="${c}">${c}</option>`).join('');
+      commodityEl.value = currentComm;
+
+      // 2. Farmer dropdown (based on selected commodity)
+      const selectedComm = commodityEl.value;
+      const filteredForFarmer = selectedComm ? items.filter(i => i.commodity === selectedComm) : items;
+      const farmers = [...new Set(filteredForFarmer.map(i => i.farmer_name).filter(Boolean))].sort();
+      const currentFarmer = farmerEl.value;
+      farmerEl.innerHTML = '<option value="">All Farmers</option>' + 
+        farmers.map(f => `<option value="${f}">${f}</option>`).join('');
+      farmerEl.value = currentFarmer;
+
+      // 3. Packing dropdown (based on selected commodity + farmer)
+      const selectedFarmer = farmerEl.value;
+      let filteredForPack = items;
+      if (selectedComm) filteredForPack = filteredForPack.filter(i => i.commodity === selectedComm);
+      if (selectedFarmer) filteredForPack = filteredForPack.filter(i => i.farmer_name === selectedFarmer);
+      const packings = [...new Set(filteredForPack.map(i => i.pack_weight).filter(Boolean))].sort();
+      const currentPack = packingEl.value;
+      packingEl.innerHTML = '<option value="">All Packing</option>' + 
+        packings.map(p => `<option value="${p}">${p}</option>`).join('');
+      packingEl.value = currentPack;
+    }
+
+    // ==================== FILTERING & SEARCH LOGIC ====================
+    function applyAllFilters() {
+      // If the user types in the search bar, clear dropdowns to let search take over
+      const searchVal = document.getElementById('search-bar').value.trim();
+      if (searchVal !== '') {
+        document.getElementById('filter-commodity').value = '';
+        document.getElementById('filter-farmer').value = '';
+        document.getElementById('filter-packing').value = '';
+        populateDropdowns();
+      } else {
+        // Otherwise, update dependent dropdowns
+        populateDropdowns();
+      }
       renderTable();
     }
 
     function renderTable() {
       const tbody = document.getElementById('inventory-tbody');
-      const items = fullInventoryData[activeSalesman] || [];
-      const query = document.getElementById('search-bar').value.toLowerCase().trim();
+      let items = getCurrentItems();
+      const searchVal = document.getElementById('search-bar').value.toLowerCase().trim();
+      const selectedComm = document.getElementById('filter-commodity').value;
+      const selectedFarmer = document.getElementById('filter-farmer').value;
+      const selectedPack = document.getElementById('filter-packing').value;
+      const ageSort = document.getElementById('filter-age').value;
 
-      const filtered = items.filter(item => {
-        const searchStr = `${item.farmer} ${item.commodity} ${item.variety} ${item.size} ${item.pack_weight}`.toLowerCase();
-        return searchStr.includes(query);
-      });
+      // === Step 1: Search Bar (highest priority) ===
+      if (searchVal !== '') {
+        items = items.filter(item => {
+          const searchStr = `${item.seq_nr} ${item.farmer_name} ${item.commodity} ${item.variety} ${item.size} ${item.pack_weight} ${item.qty} ${item.age_days}`.toLowerCase();
+          return searchStr.includes(searchVal);
+        });
+      } 
+      // === Step 2: Dropdown Filters ===
+      else {
+        if (selectedComm) items = items.filter(i => i.commodity === selectedComm);
+        if (selectedFarmer) items = items.filter(i => i.farmer_name === selectedFarmer);
+        if (selectedPack) items = items.filter(i => i.pack_weight === selectedPack);
+      }
 
-      if (filtered.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7">No matching inventory items found.</td></tr>';
+      // === Step 3: Age Sorting ===
+      if (ageSort === 'oldest') {
+        items.sort((a, b) => b.age_days - a.age_days); // Oldest first
+      } else {
+        items.sort((a, b) => a.age_days - b.age_days); // Newest first
+      }
+
+      if (items.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8">No matching floor items found.</td></tr>';
         return;
       }
 
       let html = '';
-      filtered.forEach(item => {
+      items.forEach(item => {
         const isOld = item.age_days > 14;
         const ageBadge = isOld 
           ? `<span class="badge-old">⚠️ ${item.age_days} Days (OLD)</span>`
@@ -135,12 +278,13 @@
 
         html += `
           <tr style="${isOld ? 'background-color: #fff1f2;' : ''}">
-           <td><strong>${item.farmer_name}</strong></td>
+            <td><strong>${item.seq_nr || '-'}</strong></td>
+            <td><strong>${item.farmer_name}</strong></td>
             <td>${item.commodity}</td>
             <td>${item.variety}</td>
             <td>${item.size}</td>
             <td>${item.pack_weight}</td>
-            <td><strong>${item.qty}</strong></td>
+            <td><strong>${item.qty.toLocaleString()}</strong></td>
             <td>${ageBadge}</td>
           </tr>
         `;
@@ -149,7 +293,7 @@
       tbody.innerHTML = html;
     }
 
-    function filterInventory() { renderTable(); }
+    // ==================== INIT ====================
     document.addEventListener('DOMContentLoaded', loadInventory);
   </script>
 </body>
