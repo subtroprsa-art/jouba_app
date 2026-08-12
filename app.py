@@ -129,12 +129,21 @@ def get_inventory(inventory_type):
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        query = f"""
-            SELECT *
-            FROM {table}
-            WHERE flr > 0 OR qty > 0
-            ORDER BY date_received DESC
-        """
+        if inventory_type == "stock":
+            query = f"""
+                SELECT *
+                FROM {table}
+                WHERE flr > 0
+                ORDER BY date_received DESC
+            """
+        else:
+            query = f"""
+                SELECT *
+                FROM {table}
+                WHERE qty > 0
+                ORDER BY date_received DESC
+            """
+            
         cursor.execute(query)
         rows = cursor.fetchall()
         cursor.close()
@@ -158,21 +167,33 @@ def get_inventory(inventory_type):
             if sm not in inventory:
                 inventory[sm] = []
 
-            # 2. Determine Farmer Name - EXACTLY from your Excel
-            farmer_name = row.get('producer') or row.get('PRODUCER') or "Unknown Producer"
+            # 2. Normalize column names (CRITICAL FIX FOR FLOOR)
+            if inventory_type == "floor":
+                # The database uses CSV-style names; the frontend expects these keys
+                row['commodity'] = row.get('commodty') or row.get('COMMODTY') or row.get('commodity') or ''
+                row['farmer_name'] = row.get('producer') or row.get('PRODUCER') or row.get('farmer_name') or ''
+                row['pack_weight'] = row.get('pack') or row.get('PACK') or row.get('packing') or row.get('PACKING') or ''
+                row['size'] = row.get('size') or row.get('SIZE') or ''
+                row['variety'] = row.get('variety') or row.get('VARIETY') or ''
+            else:
+                # Stock already uses the correct keys from the CSV parser
+                row['farmer_name'] = row.get('producer') or row.get('PRODUCER') or row.get('farmer_name') or ''
 
-            # 3. Determine Qty - FLR is your actual stock
-            qty = row.get('flr') or 0
+            # 3. Determine Qty
+            if inventory_type == "stock":
+                qty = row.get('flr') or 0
+            else:
+                qty = row.get('qty') or 0
+
             if qty == 0:
                 continue
 
-            # 4. Determine Pack Weight
-            pack = row.get('packing') or row.get('pack') or ""
+            # 4. SEQ (Only for floor)
+            seq_nr = row.get('seq_nr') or 0
 
-            # 5. BULLETPROOF DATE CALCULATION
+            # 5. Date Calculation
             raw_date = row.get('date_received')
             age_days = 0
-            
             if raw_date:
                 try:
                     if isinstance(raw_date, str):
@@ -186,17 +207,22 @@ def get_inventory(inventory_type):
                 except Exception:
                     age_days = 0
 
-            # 6. Build Item - Only showing what you want
+            # 6. Build Item
             item = {
                 "salesman": sm,
-                "farmer_name": farmer_name,
-                "commodity": row.get('commodty') or row.get('commodity') or '',
-                "variety": row.get('variety') or '',
-                "size": row.get('size') or '',
-                "pack_weight": pack,
+                "farmer_name": row['farmer_name'],
+                "commodity": row['commodity'],
+                "variety": row['variety'],
+                "size": row['size'],
+                "pack_weight": row['pack_weight'],
                 "qty": int(qty) if qty else 0,
                 "age_days": age_days
             }
+            
+            # 7. Add SEQ to the item if it's floor
+            if inventory_type == "floor":
+                item["seq_nr"] = int(seq_nr) if seq_nr else 0
+                
             inventory[sm].append(item)
 
         return jsonify({"inventory": inventory}), 200
@@ -268,6 +294,44 @@ def handle_upload(table_name):
                     size,
                     count,
                     flr,
+                    date_received
+                ))
+                inserted_count += 1
+
+            else:  # floor_records
+                seq_nr = int(row.get('SEQ', 0)) if pd.notna(row.get('SEQ')) else 0
+                grn = str(row.get('GRN', '')).strip() if pd.notna(row.get('GRN')) else ''
+                producer = str(row.get('PRODUCER', '')).strip() if pd.notna(row.get('PRODUCER')) else ''
+                commodity = str(row.get('COMMODTY', '')).strip() if pd.notna(row.get('COMMODTY')) else ''
+                pack = str(row.get('PACKING', '')).strip() if pd.notna(row.get('PACKING')) else ''
+                variety = str(row.get('VARIETY', '')).strip() if pd.notna(row.get('VARIETY')) else ''
+                grade = str(row.get('CLASS', '')).strip() if pd.notna(row.get('CLASS')) else ''
+                size = str(row.get('SIZE', '')).strip() if pd.notna(row.get('SIZE')) else ''
+                count = str(row.get('COUNT', '')).strip() if pd.notna(row.get('COUNT')) else ''
+                qty = int(row.get('BALANCE', 0)) if pd.notna(row.get('BALANCE')) else 0
+                date_received = row.get('RECEIVED') if pd.notna(row.get('RECEIVED')) else None
+
+                if qty == 0:
+                    continue
+
+                salesman = parse_salesman(file.filename)
+
+                cursor.execute(f"""
+                    INSERT INTO {table_name} 
+                    (salesman, seq_nr, grn, producer, commodity, pack, variety, grade, size, count, qty, date_received)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, (
+                    salesman,
+                    seq_nr,
+                    grn,
+                    producer,
+                    commodity,
+                    pack,
+                    variety,
+                    grade,
+                    size,
+                    count,
+                    qty,
                     date_received
                 ))
                 inserted_count += 1
