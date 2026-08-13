@@ -255,6 +255,120 @@ def get_inventory(inventory_type):
         return jsonify({"error": str(e)}), 500
 
 
+# ===================== SALES PIPELINE API =====================
+
+@app.route("/api/sales-pipeline", methods=["GET"])
+def get_sales_pipeline():
+    if not session.get("user"):
+        return jsonify({"error": "Unauthorized"}), 401
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # 1. Get top buyers and their phone numbers
+        cursor.execute("""
+            SELECT 
+                bh.buyer AS buyer, 
+                SUM(bh.total) as total_spent, 
+                COUNT(*) as total_units, 
+                bp.phone
+            FROM buyer_history bh
+            LEFT JOIN buyer_phones bp ON bh.buyer = bp.buyer_name
+            GROUP BY bh.buyer, bp.phone
+            ORDER BY total_spent DESC
+            LIMIT 20
+        """)
+        buyers = cursor.fetchall()
+
+        # 2. Get distinct commodities available in stock or floor
+        cursor.execute("""
+            SELECT DISTINCT commodity FROM stock_records WHERE flr > 0
+            UNION
+            SELECT DISTINCT commodity FROM floor_records WHERE qty > 0
+        """)
+        commodities_raw = cursor.fetchall()
+        commodities = [row['commodity'] for row in commodities_raw if row['commodity']]
+
+        cursor.close()
+        conn.close()
+
+        pipeline = []
+        for b in buyers:
+            pipeline.append({
+                "buyer": b['buyer'],
+                "total_spent": float(b['total_spent']) if b['total_spent'] else 0,
+                "total_units": int(b['total_units']) if b['total_units'] else 0,
+                "phone": b['phone'] or "",
+                "commodities": commodities,
+                "contacted_by": None
+            })
+
+        return jsonify({"pipeline": pipeline}), 200
+
+    except Exception as e:
+        logger.exception("Error fetching pipeline")
+        return jsonify({"pipeline": [], "error": str(e)}), 500
+
+
+@app.route("/api/buyer-details/<buyer_name>", methods=["GET"])
+def get_buyer_details(buyer_name):
+    if not session.get("user"):
+        return jsonify({"error": "Unauthorized"}), 401
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT commodity, pack, SUM(qty) as total_qty
+            FROM buyer_history
+            WHERE buyer = %s
+            GROUP BY commodity, pack
+            ORDER BY total_qty DESC
+            LIMIT 10
+        """, (buyer_name,))
+        matches = cursor.fetchall()
+        
+        cursor.close()
+        conn.close()
+
+        return jsonify([dict(m) for m in matches]), 200
+
+    except Exception as e:
+        logger.exception("Error fetching buyer details")
+        return jsonify([]), 200
+
+
+@app.route("/api/mark-contacted", methods=["POST"])
+def mark_contacted():
+    if not session.get("user"):
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.get_json()
+    buyer = data.get("buyer")
+    user = session.get("user_name")
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            INSERT INTO buyer_contact_log (buyer, contacted_by, contacted_at)
+            VALUES (%s, %s, NOW())
+        """, (buyer, user))
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        return jsonify({"success": True}), 200
+
+    except Exception as e:
+        logger.exception("Error marking contacted")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 # ===================== UPLOAD ENDPOINTS =====================
 
 @app.route("/upload-stock", methods=["POST"])
