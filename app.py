@@ -129,12 +129,21 @@ def get_inventory(inventory_type):
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        query = f"""
-            SELECT *
-            FROM {table}
-            WHERE flr > 0 OR qty > 0
-            ORDER BY date_received DESC
-        """
+        if inventory_type == "stock":
+            query = f"""
+                SELECT *
+                FROM {table}
+                WHERE flr > 0 OR qty > 0
+                ORDER BY date_received DESC
+            """
+        else:
+            query = f"""
+                SELECT *
+                FROM {table}
+                WHERE qty > 0 OR qty_floor > 0
+                ORDER BY date_received DESC
+            """
+            
         cursor.execute(query)
         rows = cursor.fetchall()
         cursor.close()
@@ -158,25 +167,60 @@ def get_inventory(inventory_type):
             if sm not in inventory:
                 inventory[sm] = []
 
-            # 2. Determine Farmer Name - EXACTLY from your Excel
-            farmer_name = row.get('producer') or row.get('PRODUCER') or "Unknown Producer"
+            # 2. Normalize columns for Floor records
+            if inventory_type == "floor":
+                # SEQ: try all possible names
+                seq_val = row.get('seq_nr') or row.get('seq_no') or 0
+                if isinstance(seq_val, str) and seq_val.isdigit():
+                    seq_val = int(seq_val)
+                
+                # Farmer name: try all possible names
+                farmer_name = row.get('producer') or row.get('PRODUCER') or row.get('farmer_name') or 'Unknown Farmer'
+                
+                # Commodity: try all possible names
+                commodity = row.get('commodity') or row.get('commodty') or row.get('COMMODITY') or ''
+                
+                # Pack: try all possible names
+                pack_weight = row.get('pack') or row.get('pack_weight') or row.get('PACK') or row.get('PACKING') or ''
+                
+                # Variety and Size
+                variety = row.get('variety') or row.get('VARIETY') or ''
+                size = row.get('size') or row.get('SIZE') or ''
+                
+                # Qty: try all possible names
+                qty = row.get('qty') or row.get('qty_floor') or row.get('QTY') or 0
+                if isinstance(qty, str) and qty.isdigit():
+                    qty = int(qty)
+                else:
+                    try:
+                        qty = int(qty) if qty else 0
+                    except:
+                        qty = 0
 
-            # 3. Determine Qty - FLR is your actual stock
-            qty = row.get('flr') or 0
+                # Date: try all possible names
+                raw_date = row.get('date_received') or row.get('intake_date') or row.get('DATE_RECEIVED')
+            else:
+                # Stock columns
+                farmer_name = row.get('producer') or row.get('PRODUCER') or row.get('farmer_name') or 'Unknown Farmer'
+                commodity = row.get('commodity') or row.get('commodty') or row.get('COMMODITY') or ''
+                pack_weight = row.get('pack') or row.get('pack_weight') or row.get('PACK') or row.get('PACKING') or ''
+                variety = row.get('variety') or row.get('VARIETY') or ''
+                size = row.get('size') or row.get('SIZE') or ''
+                qty = row.get('flr') or row.get('qty') or row.get('QTY_FLOOR') or 0
+                raw_date = row.get('date_received') or row.get('DATE_RECEIVED')
+
             if qty == 0:
                 continue
 
-            # 4. Determine Pack Weight
-            pack = row.get('packing') or row.get('pack') or ""
-
-            # 5. BULLETPROOF DATE CALCULATION
-            raw_date = row.get('date_received')
+            # Date Calculation
             age_days = 0
-            
             if raw_date:
                 try:
                     if isinstance(raw_date, str):
-                        dt = datetime.strptime(raw_date.split(' ')[0], '%Y-%m-%d').date()
+                        # Try to extract date from string
+                        if ' ' in raw_date:
+                            raw_date = raw_date.split(' ')[0]
+                        dt = datetime.strptime(raw_date[:10], '%Y-%m-%d').date()
                     else:
                         dt = raw_date
                     
@@ -186,17 +230,22 @@ def get_inventory(inventory_type):
                 except Exception:
                     age_days = 0
 
-            # 6. Build Item - Only showing what you want
+            # Build Item
             item = {
                 "salesman": sm,
                 "farmer_name": farmer_name,
-                "commodity": row.get('commodty') or row.get('commodity') or '',
-                "variety": row.get('variety') or '',
-                "size": row.get('size') or '',
-                "pack_weight": pack,
+                "commodity": commodity,
+                "variety": variety,
+                "size": size,
+                "pack_weight": pack_weight,
                 "qty": int(qty) if qty else 0,
                 "age_days": age_days
             }
+            
+            # Add SEQ to the item if it's floor
+            if inventory_type == "floor":
+                item["seq_nr"] = int(seq_val) if seq_val else 0
+                
             inventory[sm].append(item)
 
         return jsonify({"inventory": inventory}), 200
@@ -204,6 +253,120 @@ def get_inventory(inventory_type):
     except Exception as e:
         logger.exception("Error fetching inventory")
         return jsonify({"error": str(e)}), 500
+
+
+# ===================== SALES PIPELINE API =====================
+
+@app.route("/api/sales-pipeline", methods=["GET"])
+def get_sales_pipeline():
+    if not session.get("user"):
+        return jsonify({"error": "Unauthorized"}), 401
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # 1. Get top buyers and their phone numbers
+        cursor.execute("""
+            SELECT 
+                bh.buyer AS buyer, 
+                SUM(bh.total) as total_spent, 
+                COUNT(*) as total_units, 
+                bp.phone
+            FROM buyer_history bh
+            LEFT JOIN buyer_phones bp ON bh.buyer = bp.buyer_name
+            GROUP BY bh.buyer, bp.phone
+            ORDER BY total_spent DESC
+            LIMIT 20
+        """)
+        buyers = cursor.fetchall()
+
+        # 2. Get distinct commodities available in stock or floor
+        cursor.execute("""
+            SELECT DISTINCT commodity FROM stock_records WHERE flr > 0
+            UNION
+            SELECT DISTINCT commodity FROM floor_records WHERE qty > 0
+        """)
+        commodities_raw = cursor.fetchall()
+        commodities = [row['commodity'] for row in commodities_raw if row['commodity']]
+
+        cursor.close()
+        conn.close()
+
+        pipeline = []
+        for b in buyers:
+            pipeline.append({
+                "buyer": b['buyer'],
+                "total_spent": float(b['total_spent']) if b['total_spent'] else 0,
+                "total_units": int(b['total_units']) if b['total_units'] else 0,
+                "phone": b['phone'] or "",
+                "commodities": commodities,
+                "contacted_by": None
+            })
+
+        return jsonify({"pipeline": pipeline}), 200
+
+    except Exception as e:
+        logger.exception("Error fetching pipeline")
+        return jsonify({"pipeline": [], "error": str(e)}), 500
+
+
+@app.route("/api/buyer-details/<buyer_name>", methods=["GET"])
+def get_buyer_details(buyer_name):
+    if not session.get("user"):
+        return jsonify({"error": "Unauthorized"}), 401
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT commodity, pack, SUM(qty) as total_qty
+            FROM buyer_history
+            WHERE buyer = %s
+            GROUP BY commodity, pack
+            ORDER BY total_qty DESC
+            LIMIT 10
+        """, (buyer_name,))
+        matches = cursor.fetchall()
+        
+        cursor.close()
+        conn.close()
+
+        return jsonify([dict(m) for m in matches]), 200
+
+    except Exception as e:
+        logger.exception("Error fetching buyer details")
+        return jsonify([]), 200
+
+
+@app.route("/api/mark-contacted", methods=["POST"])
+def mark_contacted():
+    if not session.get("user"):
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.get_json()
+    buyer = data.get("buyer")
+    user = session.get("user_name")
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            INSERT INTO buyer_contact_log (buyer, contacted_by, contacted_at)
+            VALUES (%s, %s, NOW())
+        """, (buyer, user))
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        return jsonify({"success": True}), 200
+
+    except Exception as e:
+        logger.exception("Error marking contacted")
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 # ===================== UPLOAD ENDPOINTS =====================
@@ -268,6 +431,44 @@ def handle_upload(table_name):
                     size,
                     count,
                     flr,
+                    date_received
+                ))
+                inserted_count += 1
+
+            else:  # floor_records
+                seq_nr = int(row.get('SEQ', 0)) if pd.notna(row.get('SEQ')) else 0
+                grn = str(row.get('GRN', '')).strip() if pd.notna(row.get('GRN')) else ''
+                producer = str(row.get('PRODUCER', '')).strip() if pd.notna(row.get('PRODUCER')) else ''
+                commodity = str(row.get('COMMODTY', '')).strip() if pd.notna(row.get('COMMODTY')) else ''
+                pack = str(row.get('PACKING', '')).strip() if pd.notna(row.get('PACKING')) else ''
+                variety = str(row.get('VARIETY', '')).strip() if pd.notna(row.get('VARIETY')) else ''
+                grade = str(row.get('CLASS', '')).strip() if pd.notna(row.get('CLASS')) else ''
+                size = str(row.get('SIZE', '')).strip() if pd.notna(row.get('SIZE')) else ''
+                count = str(row.get('COUNT', '')).strip() if pd.notna(row.get('COUNT')) else ''
+                qty = int(row.get('BALANCE', 0)) if pd.notna(row.get('BALANCE')) else 0
+                date_received = row.get('RECEIVED') if pd.notna(row.get('RECEIVED')) else None
+
+                if qty == 0:
+                    continue
+
+                salesman = parse_salesman(file.filename)
+
+                cursor.execute(f"""
+                    INSERT INTO {table_name} 
+                    (salesman, seq_nr, grn, producer, commodity, pack, variety, grade, size, count, qty, date_received)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, (
+                    salesman,
+                    seq_nr,
+                    grn,
+                    producer,
+                    commodity,
+                    pack,
+                    variety,
+                    grade,
+                    size,
+                    count,
+                    qty,
                     date_received
                 ))
                 inserted_count += 1
