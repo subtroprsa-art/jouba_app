@@ -6,209 +6,288 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <style>
     body { font-family: sans-serif; background: #f8fafc; padding: 24px; margin: 0; color: #1e293b; }
-    .nav { margin-bottom: 24px; display: flex; justify-content: space-between; align-items: center; }
+    .nav { margin-bottom: 24px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
     .btn-back { background: #e2e8f0; color: #334155; padding: 8px 16px; text-decoration: none; border-radius: 6px; font-weight: bold; }
     .user-tag { font-size: 14px; background: #dcfce7; color: #166534; padding: 6px 12px; border-radius: 20px; font-weight: bold; }
     
-    table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-    th, td { padding: 12px 16px; text-align: left; border-bottom: 1px solid #f1f5f9; }
-    th { background: #f8fafc; font-size: 12px; text-transform: uppercase; color: #64748b; }
+    /* DESKTOP TABLE STYLES */
+    table.desktop-view { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); display: table; }
+    table.desktop-view th, table.desktop-view td { padding: 12px 16px; text-align: left; border-bottom: 1px solid #f1f5f9; }
+    table.desktop-view th { background: #f8fafc; font-size: 12px; text-transform: uppercase; color: #64748b; }
     
-    tr.clickable-row { cursor: pointer; }
-    tr.clickable-row:hover { background: #f1f5f9; }
-    
-    /* Strikethrough & Lock CSS */
-    tr.contacted { background: #f1f5f9; opacity: 0.65; text-decoration: line-through; }
-    .contact-badge { font-size: 12px; background: #fee2e2; color: #991b1b; padding: 4px 8px; border-radius: 4px; font-weight: bold; text-decoration: none; display: inline-block; }
     .btn-wa { background: #22c55e; color: white; padding: 6px 14px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-flex; align-items: center; }
+    .contact-badge { font-size: 12px; background: #fee2e2; color: #991b1b; padding: 4px 8px; border-radius: 4px; font-weight: bold; display: inline-block; }
     
-    /* Inline Match Tray Styles */
-    tr.detail-row { display: none; background: #f8fafc; }
-    .match-tray { padding: 16px 24px; border-left: 4px solid #22c55e; }
-    .match-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; font-weight: bold; }
-    .match-grid { display: flex; flex-wrap: wrap; gap: 12px; }
-    .match-card { background: white; border: 1px solid #cbd5e1; padding: 8px 14px; border-radius: 6px; display: flex; align-items: center; gap: 8px; font-size: 14px; }
-    .match-card label { cursor: pointer; }
+    /* ============ MOBILE CARD VIEW ============ */
+    .mobile-view { display: none; }
+    
+    @media (max-width: 600px) {
+        .desktop-view { display: none; }
+        .mobile-view { display: block; }
+        
+        .buyer-card {
+            background: white;
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 16px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            border: 1px solid #e2e8f0;
+        }
+        .buyer-card .buyer-name {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 4px;
+        }
+        .buyer-card .buyer-spent {
+            font-size: 14px;
+            color: #64748b;
+            margin-bottom: 8px;
+        }
+        .buyer-card .buyer-actions {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin-top: 8px;
+            flex-wrap: wrap;
+        }
+        .buyer-card .btn-wa {
+            flex: 1;
+            justify-content: center;
+            padding: 14px;
+            font-size: 16px;
+            border-radius: 10px;
+            text-align: center;
+        }
+        .buyer-card .contact-badge {
+            font-size: 13px;
+            padding: 8px 12px;
+        }
+        .expand-arrow {
+            cursor: pointer;
+            color: #0284c7;
+            font-weight: bold;
+            margin-top: 6px;
+            display: inline-block;
+            font-size: 14px;
+        }
+        .match-tray {
+            display: none;
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid #e2e8f0;
+        }
+        .match-tray.open { display: block; }
+        .match-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 6px 0;
+            font-size: 15px;
+        }
+        .match-item input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            accent-color: #22c55e;
+        }
+    }
+
+    /* HIDE MATCH TRAY ON DESKTOP UNTIL CLICKED */
+    .detail-row { display: none; background: #f8fafc; }
+    tr.detail-row.open { display: table-row; }
   </style>
 </head>
 <body>
   <div class="nav">
     <a href="/dashboard" class="btn-back">⬅️ Back to Hub</a>
-    <h2>Sales Team Pipeline</h2>
-    <span class="user-tag">👤 User: {{ user_name }}</span>
+    <h2 style="margin:0; flex:1; text-align:center;">Sales Pipeline</h2>
+    <span class="user-tag">👤 {{ user_name }}</span>
   </div>
 
-  <table>
+  <!-- DESKTOP TABLE VIEW -->
+  <table class="desktop-view">
     <thead>
       <tr>
         <th>Rank</th>
-        <th>Buyer (Click to Expand Matches)</th>
+        <th>Buyer (Click to Expand)</th>
         <th>Total Spent</th>
         <th>Action</th>
       </tr>
     </thead>
-    <tbody id="pipeline-tbody">
-      <tr><td colspan="4">Loading pipeline matches...</td></tr>
-    </tbody>
+    <tbody id="pipeline-tbody-desktop"></tbody>
   </table>
 
-  <script>
-    async function loadPipelineData() {
-      // Preserve open tray indices before refreshing
-      const openIndices = new Set();
-      document.querySelectorAll('.detail-row').forEach((row, idx) => {
-        if (row.style.display === 'table-row') {
-          openIndices.add(idx);
-        }
-      });
+  <!-- MOBILE CARD VIEW -->
+  <div id="pipeline-tbody-mobile" class="mobile-view"></div>
 
-      const tbody = document.getElementById('pipeline-tbody');
+  <script>
+    let currentData = [];
+
+    async function loadPipelineData() {
+      const tbodyDesktop = document.getElementById('pipeline-tbody-desktop');
+      const tbodyMobile = document.getElementById('pipeline-tbody-mobile');
+      
       try {
         const response = await fetch('/api/sales-pipeline');
         const data = await response.json();
+        currentData = data.pipeline || [];
 
-        let newHtml = '';
-        data.pipeline.forEach((row, index) => {
-          const isContacted = !!row.contacted_by;
-          const cleanPhone = row.phone ? row.phone.replace(/[^0-9]/g, '') : '';
-
-          let actionHtml = '';
-          if (isContacted) {
-            actionHtml = `<span class="contact-badge">🔒 Contacted by ${row.contacted_by}</span>`;
-          } else {
-            actionHtml = `<a id="wa-btn-${index}" href="#" target="_blank" class="btn-wa" onclick="onWhatsAppClick(event, '${escapeQuotes(row.buyer)}', ${index})">💬 WhatsApp</a>`;
-          }
-
-          const isOpen = openIndices.has(index);
-
-          // Preserve existing match tray content if it was already expanded
-          const existingGrid = document.getElementById(`match-grid-${index}`);
-          const gridContent = existingGrid ? existingGrid.innerHTML : 'Loading match items...';
-          const isLoaded = existingGrid && existingGrid.dataset.loaded ? 'data-loaded="true"' : '';
-
-          newHtml += `
-            <tr id="buyer-row-${index}" class="clickable-row ${isContacted ? 'contacted' : ''}" data-phone="${cleanPhone}" data-buyer="${escapeQuotes(row.buyer)}">
-              <td onclick="toggleTray(${index}, '${escapeQuotes(row.buyer)}')">#${index + 1}</td>
-              <td onclick="toggleTray(${index}, '${escapeQuotes(row.buyer)}')"><strong>${row.buyer}</strong> ▾</td>
-              <td onclick="toggleTray(${index}, '${escapeQuotes(row.buyer)}')">R ${row.total_spent.toLocaleString('en-ZA', {minimumFractionDigits: 2})}</td>
-              <td>${actionHtml}</td>
-            </tr>
-            <tr id="detail-row-${index}" class="detail-row" style="display: ${isOpen ? 'table-row' : 'none'};">
-              <td colspan="4">
-                <div class="match-tray">
-                  <div class="match-header">
-                    <span>Select Product Matches to Include in Message:</span>
-                    <label style="cursor:pointer;"><input type="checkbox" checked id="select-all-${index}" onchange="toggleSelectAll(${index})"> <strong>Select All</strong></label>
-                  </div>
-                  <div class="match-grid" id="match-grid-${index}" ${isLoaded}>${gridContent}</div>
-                </div>
-              </td>
-            </tr>
-          `;
-        });
-
-        tbody.innerHTML = newHtml;
-
-        // Re-calculate active WhatsApp links for open rows
-        openIndices.forEach(idx => updateWhatsAppUrl(idx));
+        renderDesktopView(tbodyDesktop);
+        renderMobileView(tbodyMobile);
 
       } catch (err) {
-        if (tbody.children.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="4">Error loading pipeline data.</td></tr>';
+        const msg = '<tr><td colspan="4">Error loading pipeline data.</td></tr>';
+        tbodyDesktop.innerHTML = msg;
+        tbodyMobile.innerHTML = `<div style="padding:20px; text-align:center; color:#ef4444;">Error loading pipeline data.</div>`;
+      }
+    }
+
+    // ===== DESKTOP RENDER =====
+    function renderDesktopView(container) {
+      if (!currentData.length) {
+        container.innerHTML = '<tr><td colspan="4">No buyers found.</td></tr>';
+        return;
+      }
+      container.innerHTML = '';
+      currentData.forEach((row, index) => {
+        const tr = document.createElement('tr');
+        const isContacted = !!row.contacted_by;
+        const cleanPhone = row.phone ? row.phone.replace(/[^0-9]/g, '') : '';
+
+        let actionHtml = '';
+        if (isContacted) {
+          actionHtml = `<span class="contact-badge">🔒 Contacted by ${row.contacted_by}</span>`;
+        } else {
+          actionHtml = `<a href="https://wa.me/${cleanPhone}?text=${encodeURIComponent('Good day ' + row.buyer + '. We have fresh produce available.')}" target="_blank" class="btn-wa">💬 WhatsApp</a>`;
         }
-      }
-    }
 
-    async function toggleTray(index, buyerName) {
-      const detailRow = document.getElementById(`detail-row-${index}`);
-      const grid = document.getElementById(`match-grid-${index}`);
-
-      if (detailRow.style.display === 'table-row') {
-        detailRow.style.display = 'none';
-        return;
-      }
-
-      detailRow.style.display = 'table-row';
-
-      if (grid.dataset.loaded) return;
-
-      const res = await fetch(`/api/buyer-details/${encodeURIComponent(buyerName)}`);
-      const matches = await res.json();
-      grid.dataset.loaded = "true";
-
-      if (!matches || matches.length === 0) {
-        grid.innerHTML = '<em>No detailed matches found.</em>';
-        return;
-      }
-
-      grid.innerHTML = '';
-      matches.forEach((item) => {
-        const itemLabel = `${item.commodity} (${item.pack})`;
-        const card = document.createElement('div');
-        card.className = 'match-card';
-        card.innerHTML = `
-          <input type="checkbox" class="comm-checkbox-${index}" value="${itemLabel}" data-comm="${item.commodity}" checked onchange="updateWhatsAppUrl(${index})">
-          <label onclick="this.previousElementSibling.click()">${itemLabel} - ${item.total_qty} units</label>
+        tr.innerHTML = `
+          <td>#${index + 1}</td>
+          <td onclick="toggleDesktopTray(${index})" style="cursor:pointer;"><strong>${row.buyer}</strong> ▾</td>
+          <td>R ${row.total_spent.toLocaleString('en-ZA', {minimumFractionDigits: 2})}</td>
+          <td>${actionHtml}</td>
         `;
-        grid.appendChild(card);
+        container.appendChild(tr);
+
+        const detailTr = document.createElement('tr');
+        detailTr.className = 'detail-row';
+        detailTr.id = `desktop-detail-${index}`;
+        detailTr.innerHTML = `
+          <td colspan="4">
+            <div style="padding:16px 24px; background:#f8fafc; border-left:4px solid #22c55e;">
+              <div id="desktop-match-grid-${index}">Loading matches...</div>
+            </div>
+          </td>
+        `;
+        container.appendChild(detailTr);
       });
-
-      updateWhatsAppUrl(index);
     }
 
-    function toggleSelectAll(index) {
-      const masterBox = document.getElementById(`select-all-${index}`);
-      const checkboxes = document.querySelectorAll(`.comm-checkbox-${index}`);
-      checkboxes.forEach(cb => cb.checked = masterBox.checked);
-      updateWhatsAppUrl(index);
+    function toggleDesktopTray(index) {
+      const el = document.getElementById(`desktop-detail-${index}`);
+      if (el) el.classList.toggle('open');
     }
 
-    function updateWhatsAppUrl(index) {
-      const mainRow = document.getElementById(`buyer-row-${index}`);
-      const waBtn = document.getElementById(`wa-btn-${index}`);
-      if (!waBtn || !mainRow) return;
+    // ===== MOBILE RENDER (WITH CHECKBOXES) =====
+    function renderMobileView(container) {
+      if (!currentData.length) {
+        container.innerHTML = '<div style="padding:20px; text-align:center; color:#64748b;">No buyers found.</div>';
+        return;
+      }
+      container.innerHTML = '';
+      currentData.forEach((row, index) => {
+        const isContacted = !!row.contacted_by;
+        const cleanPhone = row.phone ? row.phone.replace(/[^0-9]/g, '') : '';
+        const card = document.createElement('div');
+        card.className = 'buyer-card';
 
-      const phone = mainRow.dataset.phone;
-      const buyer = mainRow.dataset.buyer;
-      const checkedBoxes = document.querySelectorAll(`.comm-checkbox-${index}:checked`);
+        card.innerHTML = `
+          <div class="buyer-name">${row.buyer}</div>
+          <div class="buyer-spent">R ${row.total_spent.toLocaleString('en-ZA', {minimumFractionDigits: 2})}</div>
+          <div class="buyer-actions" id="mobile-actions-${index}">
+            ${isContacted ? `<span class="contact-badge">🔒 Contacted by ${row.contacted_by}</span>` : 
+              `<a id="wa-btn-${index}" href="#" target="_blank" class="btn-wa" onclick="generateAndSendWA(${index})">💬 WhatsApp</a>`}
+          </div>
+          <div class="expand-arrow" onclick="toggleMobileTray(${index})">▼ Show products</div>
+          <div class="match-tray" id="mobile-match-${index}">
+            <div id="mobile-match-grid-${index}">Loading products...</div>
+          </div>
+        `;
+        container.appendChild(card);
+      });
+    }
+
+    function toggleMobileTray(index) {
+      const tray = document.getElementById(`mobile-match-${index}`);
+      if (tray) tray.classList.toggle('open');
       
-      const selectedProducts = Array.from(checkedBoxes).map(cb => cb.dataset.comm);
-      const uniqueProducts = [...new Set(selectedProducts)];
+      // Only fetch data if it's opening and empty
+      if (tray.classList.contains('open') && !tray.dataset.loaded) {
+        loadBuyerMatches(index);
+      }
+    }
 
+    async function loadBuyerMatches(index) {
+      const grid = document.getElementById(`mobile-match-grid-${index}`);
+      const buyer = currentData[index].buyer;
+      try {
+        const res = await fetch(`/api/buyer-details/${encodeURIComponent(buyer)}`);
+        const matches = await res.json();
+        if (!matches || matches.length === 0) {
+          grid.innerHTML = '<div style="padding:10px 0; color:#64748b;">No past product history found.</div>';
+          return;
+        }
+        
+        let html = `<div style="font-size:13px; color:#64748b; margin-bottom:8px;">Select products to include in message:</div>`;
+        matches.forEach((item, i) => {
+          html += `
+            <div class="match-item">
+              <input type="checkbox" id="prod-${index}-${i}" value="${item.commodity}" checked onchange="updateMobileWhatsAppUrl(${index})">
+              <label for="prod-${index}-${i}">${item.commodity} (${item.pack}) - ${item.total_qty} units</label>
+            </div>
+          `;
+        });
+        grid.innerHTML = html;
+        
+        // Mark as loaded so we don't refetch
+        document.getElementById(`mobile-match-${index}`).dataset.loaded = "true";
+        
+        // Generate initial WhatsApp message
+        updateMobileWhatsAppUrl(index);
+      } catch (err) {
+        grid.innerHTML = '<div style="color:#ef4444;">Error loading products.</div>';
+      }
+    }
+
+    function updateMobileWhatsAppUrl(index) {
+      const waBtn = document.getElementById(`wa-btn-${index}`);
+      if (!waBtn) return;
+
+      const buyer = currentData[index].buyer;
+      const cleanPhone = currentData[index].phone ? currentData[index].phone.replace(/[^0-9]/g, '') : '';
+      
+      // Get all checked checkboxes
+      const checkboxes = document.querySelectorAll(`#mobile-match-${index} input[type="checkbox"]:checked`);
+      const selected = Array.from(checkboxes).map(cb => cb.value);
+      
       let msg = "";
-      if (uniqueProducts.length > 0) {
-        const productText = uniqueProducts.join(', ');
-        msg = `Good day ${buyer}. We have ${productText} available for you today. Would you be interested to secure this produce?`;
+      if (selected.length > 0) {
+        msg = `Good day ${buyer}. We have ${selected.join(', ')} available for you today. Would you be interested to secure this produce?`;
       } else {
         msg = `Good day ${buyer}. We have fresh produce available for you today. Would you be interested?`;
       }
-
-      const waUrl = phone 
-        ? `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`
+      
+      waBtn.href = cleanPhone 
+        ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}`
         : `https://wa.me/?text=${encodeURIComponent(msg)}`;
-
-      waBtn.href = waUrl;
     }
 
-    async function onWhatsAppClick(event, buyerName, index) {
-      event.preventDefault();
+    function generateAndSendWA(index) {
       const waBtn = document.getElementById(`wa-btn-${index}`);
-      if (waBtn.href && waBtn.href !== '#') {
+      if (waBtn && waBtn.href !== '#') {
         window.open(waBtn.href, '_blank');
       }
-
-      await fetch('/api/mark-contacted', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ buyer: buyerName })
-      });
-
-      loadPipelineData();
     }
 
-    function escapeQuotes(str) { return str.replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
-
-    setInterval(loadPipelineData, 15000);
     document.addEventListener('DOMContentLoaded', loadPipelineData);
   </script>
 </body>
