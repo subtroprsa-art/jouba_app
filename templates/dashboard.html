@@ -13,6 +13,37 @@
     .card h3 { margin-top: 0; font-size: 20px; color: #0f172a; }
     .card p { color: #64748b; font-size: 14px; margin-bottom: 0; }
     .btn-logout { background: #ef4444; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-weight: bold; }
+    /* MOBILE RESPONSIVE FIXES */
+    @media (max-width: 600px) {
+        .nav, .header {
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 10px;
+            text-align: center;
+        }
+        h2 {
+            font-size: 1.2rem;
+            margin: 5px 0;
+        }
+        .btn-back {
+            padding: 6px 12px;
+            font-size: 13px;
+        }
+        .tab-btn {
+            padding: 8px 12px;
+            font-size: 13px;
+        }
+        table th, table td {
+            padding: 8px 6px;
+            font-size: 13px;
+            word-break: break-word;
+        }
+        /* Fix the search bar on mobile */
+        .search-box {
+            font-size: 14px;
+            padding: 10px;
+        }
+    }
   </style>
 </head>
 <body>
