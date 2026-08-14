@@ -16,44 +16,63 @@
     .tab-btn { padding: 10px 20px; border: 2px solid #cbd5e1; background: white; border-radius: 8px; cursor: pointer; font-weight: bold; color: #475569; font-size: 14px; transition: all 0.2s; }
     .tab-btn:hover { background: #f1f5f9; }
     .tab-btn.active { background: #0284c7; color: white; border-color: #0284c7; box-shadow: 0 2px 6px rgba(2, 132, 199, 0.4); }
+
+    /* === MOBILE CARD VIEW === */
+    .card-view { display: none; }
     
-    /* === SCROLLABLE TABLE WRAPPER === */
-    .table-wrapper {
-        width: 100%;
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch; /* Smooth scrolling on iPhone */
-        border-radius: 8px;
+    @media (max-width: 600px) {
+        .table-view { display: none; }
+        .card-view { display: block; }
+        
+        /* Hide the 4 filter dropdowns on mobile for more space */
+        .filter-row { display: none; }
+
+        .floor-card {
+            background: white;
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 14px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+            border: 1px solid #e2e8f0;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .floor-card .row-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 16px;
+            font-weight: bold;
+        }
+        .floor-card .row-mid {
+            display: flex;
+            gap: 12px;
+            font-size: 14px;
+            color: #334155;
+            flex-wrap: wrap;
+        }
+        .floor-card .row-bot {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 13px;
+            color: #475569;
+        }
+        .floor-card .badge-age {
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-weight: bold;
+            font-size: 12px;
+        }
+        .badge-old { background: #fee2e2; color: #991b1b; }
+        .badge-fresh { background: #dcfce7; color: #166534; }
     }
-    table {
-        width: 100%;
-        min-width: 650px; /* Ensures the table forces a scrollbar on narrow phones */
-        border-collapse: collapse;
-        background: white;
-        border-radius: 8px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-    }
-    
+
+    /* DESKTOP TABLE VIEW */
+    table.table-view { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
     th, td { padding: 12px 16px; text-align: left; border-bottom: 1px solid #f1f5f9; }
     th { background: #f8fafc; font-size: 12px; text-transform: uppercase; color: #64748b; }
-    
-    .badge-old { background: #fee2e2; color: #991b1b; padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 12px; display: inline-block; }
-    .badge-fresh { background: #dcfce7; color: #166534; padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 12px; display: inline-block; }
-    
-    /* === MOBILE RESPONSIVE FIXES === */
-    @media (max-width: 600px) {
-        .nav { justify-content: center; text-align: center; }
-        h2 { font-size: 1.2rem; margin: 5px 0; }
-        .tab-btn { padding: 8px 12px; font-size: 13px; }
-        
-        /* Tighter padding and smaller font to fit more on the screen */
-        th, td {
-            padding: 8px 6px;
-            font-size: 12px;
-            word-break: break-word;
-        }
-        .search-box { font-size: 14px; padding: 10px; }
-        .salesmen-tabs { justify-content: center; }
-    }
   </style>
 </head>
 <body>
@@ -63,30 +82,29 @@
     <span style="font-weight: bold;">👤 {{ user_name }}</span>
   </div>
 
-  <input type="text" id="search-bar" class="search-box" placeholder="🔍 Search Seq, Farmer, Commodity, Variety, Size, Weight..." onkeyup="filterInventory()">
+  <input type="text" id="search-bar" class="search-box" placeholder="🔍 Search Seq, Farmer, Commodity..." onkeyup="filterInventory()">
 
   <div id="salesmen-tabs" class="salesmen-tabs"></div>
 
-  <!-- TABLE WRAPPED IN A SCROLLABLE DIV -->
-  <div class="table-wrapper">
-    <table>
-      <thead>
-        <tr>
-          <th>Seq</th>
-          <th>Farmer Name</th>
-          <th>Commodity</th>
-          <th>Variety</th>
-          <th>Size</th>
-          <th>Weight</th>
-          <th>Qty</th>
-          <th>Aging (Days)</th>
-        </tr>
-      </thead>
-      <tbody id="inventory-tbody">
-        <tr><td colspan="8">Loading floor balance...</td></tr>
-      </tbody>
-    </table>
-  </div>
+  <!-- DESKTOP: TABLE VIEW -->
+  <table class="table-view">
+    <thead>
+      <tr>
+        <th>Seq</th>
+        <th>Farmer Name</th>
+        <th>Commodity</th>
+        <th>Variety</th>
+        <th>Size</th>
+        <th>Weight</th>
+        <th>Qty</th>
+        <th>Aging (Days)</th>
+      </tr>
+    </thead>
+    <tbody id="inventory-tbody-table"></tbody>
+  </table>
+
+  <!-- MOBILE: CARD VIEW -->
+  <div id="inventory-tbody-cards" class="card-view"></div>
 
   <script>
     const invType = 'floor'; 
@@ -94,95 +112,99 @@
     let activeSalesman = null;
 
     async function loadInventory() {
-      const tbody = document.getElementById('inventory-tbody');
-      tbody.innerHTML = '<tr><td colspan="8">Loading floor balance data...</td></tr>';
-      
       try {
         const res = await fetch(`/api/inventory/${invType}`);
         const data = await res.json();
         fullInventoryData = data.inventory || {};
-        
         renderSalesmenTabs();
       } catch (err) {
-        tbody.innerHTML = '<tr><td colspan="8">Error loading floor balance data.</td></tr>';
+        document.getElementById('inventory-tbody-table').innerHTML = '<tr><td colspan="8">Error loading data.</td></tr>';
+        document.getElementById('inventory-tbody-cards').innerHTML = '<div style="padding:20px; text-align:center; color:#ef4444;">Error loading data.</div>';
       }
     }
 
     function renderSalesmenTabs() {
       const container = document.getElementById('salesmen-tabs');
       container.innerHTML = '';
-      
       const salesmen = Object.keys(fullInventoryData);
-      if (salesmen.length === 0) {
-        container.innerHTML = '<em>No floor balance records found.</em>';
-        document.getElementById('inventory-tbody').innerHTML = '<tr><td colspan="8">No floor balance available.</td></tr>';
+      if (!salesmen.length) {
+        container.innerHTML = '<em>No records found.</em>';
+        document.getElementById('inventory-tbody-table').innerHTML = '<tr><td colspan="8">No data available.</td></tr>';
+        document.getElementById('inventory-tbody-cards').innerHTML = '<div style="padding:20px; text-align:center; color:#94a3b8;">No floor data available.</div>';
         return;
       }
-
-      salesmen.forEach((sm, index) => {
+      salesmen.forEach((sm, idx) => {
         const btn = document.createElement('button');
-        btn.className = `tab-btn ${index === 0 ? 'active' : ''}`;
-        
-        // Show total quantity, not row count
-        const items = fullInventoryData[sm];
-        let totalStock = 0;
-        items.forEach(item => {
-          totalStock += item.qty;
-        });
-
-        btn.innerText = `👤 ${sm} (${totalStock.toLocaleString()})`;
+        btn.className = `tab-btn ${idx === 0 ? 'active' : ''}`;
+        const total = fullInventoryData[sm].reduce((sum, i) => sum + i.qty, 0);
+        btn.innerText = `👤 ${sm} (${total.toLocaleString()})`;
         btn.onclick = () => selectSalesman(sm, btn);
         container.appendChild(btn);
       });
-
       activeSalesman = salesmen[0];
       renderTable();
     }
 
-    function selectSalesman(sm, btnElement) {
+    function selectSalesman(sm, btn) {
       activeSalesman = sm;
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-      btnElement.classList.add('active');
+      btn.classList.add('active');
       renderTable();
     }
 
     function renderTable() {
-      const tbody = document.getElementById('inventory-tbody');
-      const items = fullInventoryData[activeSalesman] || [];
+      // Table render
+      const tbodyTable = document.getElementById('inventory-tbody-table');
+      // Card render
+      const tbodyCards = document.getElementById('inventory-tbody-cards');
+      
+      let items = fullInventoryData[activeSalesman] || [];
       const query = document.getElementById('search-bar').value.toLowerCase().trim();
 
-      const filtered = items.filter(item => {
-        const searchStr = `${item.seq_nr} ${item.farmer_name} ${item.commodity} ${item.variety} ${item.size} ${item.pack_weight}`.toLowerCase();
-        return searchStr.includes(query);
-      });
+      if (query) {
+        items = items.filter(item => 
+          `${item.seq_nr} ${item.farmer_name} ${item.commodity} ${item.variety} ${item.size} ${item.pack_weight} ${item.qty} ${item.age_days}`.toLowerCase().includes(query)
+        );
+      }
 
-      if (filtered.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8">No matching floor items found.</td></tr>';
+      if (!items.length) {
+        tbodyTable.innerHTML = '<tr><td colspan="8">No matching items found.</td></tr>';
+        tbodyCards.innerHTML = '<div style="padding:20px; text-align:center; color:#94a3b8;">No matching items found.</div>';
         return;
       }
 
-      let html = '';
-      filtered.forEach(item => {
-        const isOld = item.age_days > 14;
-        const ageBadge = isOld 
-          ? `<span class="badge-old">⚠️ ${item.age_days} Days (OLD)</span>`
-          : `<span class="badge-fresh">${item.age_days} Days</span>`;
+      // Render Desktop Table
+      tbodyTable.innerHTML = items.map(item => `
+        <tr>
+          <td><strong>${item.seq_nr || '-'}</strong></td>
+          <td>${item.farmer_name}</td>
+          <td>${item.commodity}</td>
+          <td>${item.variety}</td>
+          <td>${item.size}</td>
+          <td>${item.pack_weight}</td>
+          <td><strong>${item.qty.toLocaleString()}</strong></td>
+          <td><span class="${item.age_days > 14 ? 'badge-old' : 'badge-fresh'}">${item.age_days} Days</span></td>
+        </tr>
+      `).join('');
 
-        html += `
-          <tr style="${isOld ? 'background-color: #fff1f2;' : ''}">
-            <td><strong>${item.seq_nr || '-'}</strong></td>
-            <td><strong>${item.farmer_name}</strong></td>
-            <td>${item.commodity}</td>
-            <td>${item.variety}</td>
-            <td>${item.size}</td>
-            <td>${item.pack_weight}</td>
-            <td><strong>${item.qty.toLocaleString()}</strong></td>
-            <td>${ageBadge}</td>
-          </tr>
-        `;
-      });
-
-      tbody.innerHTML = html;
+      // Render Mobile Cards
+      tbodyCards.innerHTML = items.map(item => `
+        <div class="floor-card">
+          <div class="row-top">
+            <span>SEQ: ${item.seq_nr || '-'}</span>
+            <span>Qty: <strong>${item.qty.toLocaleString()}</strong></span>
+          </div>
+          <div class="row-mid">
+            <span>${item.farmer_name}</span>
+            <span>•</span>
+            <span>${item.commodity}</span>
+          </div>
+          <div class="row-bot">
+            <span>${item.pack_weight} | ${item.variety} | ${item.size}</span>
+            <span class="badge-age ${item.age_days > 14 ? 'badge-old' : 'badge-fresh'}">${item.age_days} Days</span>
+          </div>
+        </div>
+      `).join('');
     }
 
     function filterInventory() { renderTable(); }
