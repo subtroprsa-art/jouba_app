@@ -2,11 +2,11 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Stock Inventory - JDW Fresh</title>
+  <title>Floor Balance - JDW Fresh</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <style>
     body { font-family: sans-serif; background: #f8fafc; padding: 24px; margin: 0; color: #1e293b; }
-    .nav { margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
+    .nav { margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
     .btn-back { background: #e2e8f0; color: #334155; padding: 8px 16px; text-decoration: none; border-radius: 6px; font-weight: bold; }
     
     .search-box { width: 100%; padding: 12px 16px; font-size: 15px; border: 1px solid #cbd5e1; border-radius: 8px; margin-bottom: 20px; box-sizing: border-box; }
@@ -17,59 +17,40 @@
     .tab-btn:hover { background: #f1f5f9; }
     .tab-btn.active { background: #0284c7; color: white; border-color: #0284c7; box-shadow: 0 2px 6px rgba(2, 132, 199, 0.4); }
     
+    /* MOBILE RESPONSIVE FIXES */
+    @media (max-width: 600px) {
+        .nav { justify-content: center; text-align: center; }
+        h2 { font-size: 1.2rem; margin: 5px 0; }
+        .tab-btn { padding: 8px 12px; font-size: 13px; }
+        table th, table td { padding: 8px 6px; font-size: 13px; word-break: break-word; }
+        table { display: block; overflow-x: auto; white-space: nowrap; }
+        .search-box { font-size: 14px; padding: 10px; }
+        .salesmen-tabs { justify-content: center; }
+    }
+
     table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
     th, td { padding: 12px 16px; text-align: left; border-bottom: 1px solid #f1f5f9; }
     th { background: #f8fafc; font-size: 12px; text-transform: uppercase; color: #64748b; }
     
     .badge-old { background: #fee2e2; color: #991b1b; padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 12px; display: inline-block; }
     .badge-fresh { background: #dcfce7; color: #166534; padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 12px; display: inline-block; }
-    /* MOBILE RESPONSIVE FIXES */
-    @media (max-width: 600px) {
-        .nav, .header {
-            flex-wrap: wrap;
-            justify-content: center;
-            gap: 10px;
-            text-align: center;
-        }
-        h2 {
-            font-size: 1.2rem;
-            margin: 5px 0;
-        }
-        .btn-back {
-            padding: 6px 12px;
-            font-size: 13px;
-        }
-        .tab-btn {
-            padding: 8px 12px;
-            font-size: 13px;
-        }
-        table th, table td {
-            padding: 8px 6px;
-            font-size: 13px;
-            word-break: break-word;
-        }
-        /* Fix the search bar on mobile */
-        .search-box {
-            font-size: 14px;
-            padding: 10px;
-        }
-    }
   </style>
 </head>
 <body>
   <div class="nav">
     <a href="/dashboard" class="btn-back">⬅️ Back to Hub</a>
-    <h2>📦 Stock Inventory</h2>
+    <h2>🏬 Floor Balance</h2>
     <span style="font-weight: bold;">👤 {{ user_name }}</span>
   </div>
 
-  <input type="text" id="search-bar" class="search-box" placeholder="🔍 Multi-search by Farmer, Commodity, Variety, Size, Weight..." onkeyup="filterInventory()">
+  <input type="text" id="search-bar" class="search-box" placeholder="🔍 Search Seq, Farmer, Commodity, Variety, Size, Weight..." onkeyup="filterInventory()">
 
   <div id="salesmen-tabs" class="salesmen-tabs"></div>
 
   <table>
     <thead>
       <tr>
+        <th>Seq</th>
         <th>Farmer Name</th>
         <th>Commodity</th>
         <th>Variety</th>
@@ -80,18 +61,18 @@
       </tr>
     </thead>
     <tbody id="inventory-tbody">
-      <tr><td colspan="7">Loading stock...</td></tr>
+      <tr><td colspan="8">Loading floor balance...</td></tr>
     </tbody>
   </table>
 
   <script>
-    const invType = 'stock'; // Use 'floor' in floor_balance.html
+    const invType = 'floor'; 
     let fullInventoryData = {};
     let activeSalesman = null;
 
     async function loadInventory() {
       const tbody = document.getElementById('inventory-tbody');
-      tbody.innerHTML = '<tr><td colspan="7">Loading inventory data...</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8">Loading floor balance data...</td></tr>';
       
       try {
         const res = await fetch(`/api/inventory/${invType}`);
@@ -100,7 +81,7 @@
         
         renderSalesmenTabs();
       } catch (err) {
-        tbody.innerHTML = '<tr><td colspan="7">Error loading inventory data.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8">Error loading floor balance data.</td></tr>';
       }
     }
 
@@ -110,15 +91,23 @@
       
       const salesmen = Object.keys(fullInventoryData);
       if (salesmen.length === 0) {
-        container.innerHTML = '<em>No stock records found.</em>';
-        document.getElementById('inventory-tbody').innerHTML = '<tr><td colspan="7">No inventory available.</td></tr>';
+        container.innerHTML = '<em>No floor balance records found.</em>';
+        document.getElementById('inventory-tbody').innerHTML = '<tr><td colspan="8">No floor balance available.</td></tr>';
         return;
       }
 
       salesmen.forEach((sm, index) => {
         const btn = document.createElement('button');
         btn.className = `tab-btn ${index === 0 ? 'active' : ''}`;
-        btn.innerText = `👤 ${sm} (${fullInventoryData[sm].length})`;
+        
+        // Show total quantity, not row count
+        const items = fullInventoryData[sm];
+        let totalStock = 0;
+        items.forEach(item => {
+          totalStock += item.qty;
+        });
+
+        btn.innerText = `👤 ${sm} (${totalStock.toLocaleString()})`;
         btn.onclick = () => selectSalesman(sm, btn);
         container.appendChild(btn);
       });
@@ -140,12 +129,12 @@
       const query = document.getElementById('search-bar').value.toLowerCase().trim();
 
       const filtered = items.filter(item => {
-        const searchStr = `${item.farmer} ${item.commodity} ${item.variety} ${item.size} ${item.pack_weight}`.toLowerCase();
+        const searchStr = `${item.seq_nr} ${item.farmer_name} ${item.commodity} ${item.variety} ${item.size} ${item.pack_weight}`.toLowerCase();
         return searchStr.includes(query);
       });
 
       if (filtered.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7">No matching inventory items found.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8">No matching floor items found.</td></tr>';
         return;
       }
 
@@ -158,12 +147,13 @@
 
         html += `
           <tr style="${isOld ? 'background-color: #fff1f2;' : ''}">
-           <td><strong>${item.farmer_name}</strong></td>
+            <td><strong>${item.seq_nr || '-'}</strong></td>
+            <td><strong>${item.farmer_name}</strong></td>
             <td>${item.commodity}</td>
             <td>${item.variety}</td>
             <td>${item.size}</td>
             <td>${item.pack_weight}</td>
-            <td><strong>${item.qty}</strong></td>
+            <td><strong>${item.qty.toLocaleString()}</strong></td>
             <td>${ageBadge}</td>
           </tr>
         `;
