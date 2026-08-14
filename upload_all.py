@@ -3,7 +3,8 @@ import requests
 
 # Your Render app URL
 SERVER_URL = "https://jdw-sync.onrender.com"
-FOLDER_PATH = r"C:\project jouba\daily_files"
+# CHANGE THIS FOLDER PATH to match what you created on your PC
+FOLDER_PATH = r"C:\project jouba\daily_uploads"  
 
 def upload_file(endpoint, file_path):
     filename = os.path.basename(file_path)
@@ -24,7 +25,7 @@ if __name__ == "__main__":
         csv_files = [f for f in files if f.endswith('.csv') or f.endswith('.txt')]
         
         if not csv_files:
-            print("⚠️ No CSV/TXT files found in daily_files folder.")
+            print("⚠️ No CSV/TXT files found in daily_uploads folder.")
         else:
             print(f"Found {len(csv_files)} file(s). Starting upload...\n")
             for file in csv_files:
@@ -39,10 +40,3 @@ if __name__ == "__main__":
                     print(f"Skipped [{file}] (Filename must contain 'stock' or 'floor')")
 
             print("\n🎉 Upload process finished!")
-# Route files based on filename keywords
-if 'stock' in file.lower():
-    upload_file('upload-stock', file_path)
-elif 'floor' in file.lower():
-    upload_file('upload-floor', file_path)
-elif 'buyer' in file.lower() or 'history' in file.lower():
-    upload_file('upload-buyer-history', file_path)
